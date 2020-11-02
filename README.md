@@ -6,8 +6,8 @@ Given a set of annotated genomes and a species tree creates a probe set which wi
 attempting to balance the number of baits per genome.
 
 ## Inputs
-Annotated Genomes - PROKKA is a suggested annotation tool
-A tree of the input genomes, this will be used to guide clustering
+* Annotated Genomes - PROKKA is a suggested annotation tool
+* A tree of the input genomes, this will be used to guide clustering
 
 ## Requirements
 This version requires
