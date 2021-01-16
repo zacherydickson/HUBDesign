@@ -3,7 +3,7 @@
 How to run SA_BOND (our program for designing oligonucleotides)
 ============================================================
 
-	./SA_BOND_<platform> <inputSequences> <outputOligos> [-length]
+	./SA_BOND <inputSequences> <outputOligos> [-length]
 [-seqSim] [-maxMatch] [-maxGC] [-minGC] [-dimerLen] [-dimerSim] [-hairpinLen]
 [-minhpLoop] [-maxhpLoop] [-rangeTm] [-minTm] [-maxTm] [-oligCon] [-saltCon]
 [-secStr] [-outMode] [-simCheck] [-paddingLen]
