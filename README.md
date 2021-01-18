@@ -25,3 +25,6 @@ A tab delimited file describing the source and position of the the probe sequenc
 
 ## Notes
 A User friendly and comprehensive version of the program is a work in progress
+
+Clustering can be performed with a single command:
+    RunClustering.pl [-options] GFFFiles ... > RepSequences.fna
