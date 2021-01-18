@@ -12,16 +12,15 @@ attempting to balance the number of baits per genome.
 ## Requirements
 This version requires
 * Perl version 5.10.0+
+* BioPerl 1.7.10+
 * MAFFT version 7.0+
-* distmat from the EMBOSS package
-* neighbor from the PHYLIP package
 * sdust
 * blastn
 * awk
 
 ## Outputs
-A fasta formated set of probe sequences
-A tab delimited file describing the source and position of the the probe sequences
+* A fasta formated set of probe sequences
+* A tab delimited file describing the source and position of the the probe sequences
 
 ## Notes
 A User friendly and comprehensive version of the program is a work in progress
