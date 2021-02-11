@@ -29,6 +29,7 @@ sub HandleSinglets($$$);    #Usage: my $nSinglets = HandleSinglets(\%GeneInfo,$C
 sub OutputCluster($$$);     #Usage: OutputCluster($ClustObj,$ClustHandle,$SeqOObj);
 sub AlignByProt($$);        #Usage: AlignByProt(\@geneList,$geneName);
 sub ConstructTree($$);      #Usage: my $TreeObj = ConstructTree($alnObj,$geneName);
+sub ReRootTree($);          #Usage: ReRootTree($treeObj);
 sub ExtractClusters($$$$);  #Usage: my @clusterList = ExtractClusters(\@geneList,$alnObj,$treeObj,$geneName);
 sub PartitionTipLabels($$); #Usage: my @ClusteredLAbels = PartitionTipLAbels($nodeObj,$threshold)
 
@@ -36,10 +37,10 @@ sub PartitionTipLabels($$); #Usage: my @ClusteredLAbels = PartitionTipLAbels($no
 #Handling Input
 
 my %opts;
-getopts('e:l:p:o:t:h',\%opts);
+getopts('d:e:l:p:o:t:vVh',\%opts);
 
 if(@ARGV < 1 or exists $opts{h}){
-    my $Usage = basename($0)." [-options] [-l GFF.tsv] GFF1.gff[.gz] ... > Genes.fna";
+    my $Usage = basename($0)." [-options] [-l GFF.tsv] GFF1.gff[.gz] ... > ClustSeq.fna";
     if(exists $opts{h}){
         die "===Description\n".
             "\tGiven a set of GFF files, extracts all CDS's and moves them to a file with the gene name\n".
@@ -51,6 +52,8 @@ if(@ARGV < 1 or exists $opts{h}){
             "\t\tThe ninth column\n".
             "\t\tNote: The basenames of the gff files are used as taxon IDs\n".
             "\t\t\tIf this is undesirable, use the -l option to specifiy input files\n".
+            "===Output\n".
+            "\tA fasta formatted file with Cluster IDs has headers\n".
             "===Options\n".
             "-d [0-1]\tThe Maximum root-tip divergence within clusters (Default: 0.15)\n".
             "-e STR\tA comma separated list of file extensions [Default: '.gz,.gff']\n".
@@ -61,6 +64,7 @@ if(@ARGV < 1 or exists $opts{h}){
             "-o PATH\t The file to which cluster info will be written (Default: ClustInfo.tsv)\n".
             "-t STR\tA string acting as a flag for the external aligner for the number of threads [Default '']\n".
             "===Flags\n".
+            "-v\tVerbose Output\n".
             "-h\tDisplay this message an exits\n";
     } elsif(! exists $opts{l}) {
         die "Usage: $Usage\n\tUse -h for more info\n";
@@ -81,28 +85,35 @@ if(exists $opts{l}){
 $opts{p} = exists $opts{p} ? $opts{p} : 1;
 $opts{o} = exists $opts{o} ? $opts{o} : "ClustInfo.tsv";
 $opts{t} = exists $opts{t} ? $opts{t} : "";
+$opts{v} = 1 if (exists $opts{V});
+
 
 #============================================================
 #Main Script
 
 my $SeqOObj = Bio::SeqIO->newFh(-format => 'fasta');
 open (my $clustHandle, ">$opts{o}") or die "Could not write to $opts{o}: $!\n";
+print $clustHandle join("\t",qw(ClusterID TaxonID SeqID GeneID Start End Strand)),"\n";
 
 
 my %GeneInfo = LoadGeneInfo(LoadGFFSet($opts{l},@ARGV));
+printf STDERR "Gene families Loaded:\t%d\n",scalar(keys %GeneInfo) if(exists $opts{v});
 my $nSinglets = HandleSinglets(\%GeneInfo,$clustHandle,$SeqOObj);
+printf STDERR "Single member gene families:\t%d\n",$nSinglets if(exists $opts{v});
 foreach my $geneName (keys %GeneInfo){
-    #  next unless($geneName eq "S");
-    my $seqList = $GeneInfo{$geneName};
-    my $alnObj = AlignByProt($seqList,$geneName);
+    printf STDERR "Processing gene family %s...\n",$geneName if(exists $opts{v});
+    my $seqListRef = $GeneInfo{$geneName};
+    print STDERR "\tAligning...\n" if(exists $opts{v});
+    my $alnObj = AlignByProt($seqListRef,$geneName);
+    print STDERR "\tGenerating Tree...\n" if(exists $opts{v});
     my $treeObj = ConstructTree($alnObj,$geneName);
-    #    my $treeIO = Bio::TreeIO->new(-format => "newick");
-    #    $treeIO->write_tree($treeObj);
-    my @clusterList = ExtractClusters($seqList,$alnObj,$treeObj,$geneName);
+    print STDERR "\tExtracting Clusters...\n" if(exists $opts{v});
+    my @clusterList = ExtractClusters($seqListRef,$alnObj,$treeObj,$geneName);
     foreach my $clusterObj (@clusterList){
         OutputCluster($clusterObj,$clustHandle,$SeqOObj);
     }
 }
+print STDERR "Done\n" if(exists $opts{v});
 
 close($clustHandle);
 
@@ -168,6 +179,7 @@ sub LoadGeneInfo(%){
                 next unless($type eq "CDS");
                 my %info = split(/=|;/,$infoStr);
                 my $geneName = exists $info{Name} ? $info{Name} : "UNKNOWN";
+                ($geneName) = split(/_/,$geneName);
                 $GeneInfo{$geneName} = [] unless(exists $GeneInfo{$geneName});
                 push(@{$GeneInfo{$geneName}},GENE->new(uid => $info{ID},start => $s,
                         end => $e, strand => $strand, seq => undef, tid => $tid, chr => $seqID));
@@ -194,7 +206,7 @@ sub LoadGeneInfo(%){
             }
             close($fh);
         } else {
-            warn "Could not open $tid: $!\n";
+            warn "Could not open $filename: $!\n";
         }
     }
     return %GeneInfo;
@@ -243,6 +255,7 @@ sub AlignByProt($$){
     my @Alignment;
     ## Output Translated Sequences to a temporary File
     my $tmpFile = File::Temp->new(DIR => $TEMP_DIR, TEMPLATE => "HUBCLUSTXXXX", SUFFIX =>".fna",UNLINK=>1);
+    print STDERR "\t\tOutputing translated sequences to $tmpFile...\n" if(exists $opts{V});
     my $SeqO = Bio::SeqIO->newFh(-format => "fasta", -fh => $tmpFile);
     my %geneIndex;
     my $nextIndex=0;
@@ -251,11 +264,12 @@ sub AlignByProt($$){
         $geneIndex{$geneObj->uid} = $nextIndex++;
     }
     ## Call the external aligner, and get its output
+    print STDERR "\t\tAligning translated sequences...\n" if(exists $opts{V});
     open( my $fh, "-|", "$ALIGNER $opts{t} ".$tmpFile->filename) or warn "Alignment Error for $geneName: $!";
-    wait;
     my $AlnI = Bio::AlignIO->new(-fh => $fh, -format => $ALIGNER_FORMAT);
     my $alnObj = $AlnI->next_aln();
     ## Detranslate the protein sequences
+    print STDERR "\t\tReturning aligned proteins to nucleotide sequence...\n" if(exists $opts{V});
     foreach my $seqObj ($alnObj->each_seq){
         my $id = $seqObj->id;
         next unless(exists $geneIndex{$id});
