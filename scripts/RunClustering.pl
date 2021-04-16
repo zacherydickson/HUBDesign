@@ -109,6 +109,14 @@ foreach my $geneName (keys %GeneInfo){
     my $treeObj = ConstructTree($alnObj,$geneName);
     print STDERR "\tExtracting Clusters...\n" if(exists $opts{v});
     my @clusterList = ExtractClusters($seqListRef,$alnObj,$treeObj,$geneName);
+    my %Count;
+    foreach (@clusterList){
+        $Count{$_->uid} = 0 unless(exists $Count{$_->uid});
+        $Count{$_->uid}++;
+    }
+    while( my ($key,$value) = each %Count){
+        print STDERR "$key\t$value\n";
+    }
     foreach my $clusterObj (@clusterList){
         OutputCluster($clusterObj,$clustHandle,$SeqOObj);
     }
@@ -242,8 +250,8 @@ sub OutputCluster($$$){
     my $oldFH = select($clustHandle);
     foreach my $geneObj (@{$clustObj->members}){
         print join("\t",($clustObj->uid,$geneObj->tid,$geneObj->chr,$geneObj->uid,$geneObj->start,$geneObj->end,$geneObj->strand)),"\n";
-        print $SeqOObj Bio::Seq->new(-seq => $clustObj->seq, -id => $clustObj->uid);
     }
+    print $SeqOObj Bio::Seq->new(-seq => $clustObj->seq, -id => $clustObj->uid);
     select($oldFH);
 }
 
