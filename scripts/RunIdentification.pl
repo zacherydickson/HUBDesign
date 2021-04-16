@@ -100,6 +100,34 @@ sub get_ids(){
     return map {$_->id} @{$self->{'PSEUDORG::clustList'}};
 }
 
+package BAITREGION;
+use Class::Struct;
+
+struct (BAITREGION => {taxon_id => '$', clust_id => '$', pos => '$', seq => '$'});
+
+sub isContig(){
+    my ($self,$other) = @_;
+    unless(ref($self) eq "BAITREGION" and ref($other) eq "BAITREGION"){
+        warn "[WARNING] Cannot check contiguity of non BAITREGION objects\n";
+        return 0;
+    }
+
+    if($self->taxon_id eq $other->taxon_id){
+        if($self->clust_id eq $other->clust_id){
+            ($self,$other) = ($other,$self) if($other->pos < $self->pos);
+            if($self->pos + length($self->seq) == $other->pos + length($other->seq) - 1){
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+sub toStr(){
+    my $self = shift;
+    return join("\t",($self->taxon_id,$self->clust_id,$self->pos,$self->seq));
+}
+
 package main;
 use warnings;
 use strict;
@@ -131,16 +159,17 @@ sub ParseAssignments($);         #my %ClusterAssignments = ParseAssignments($ass
 sub ConstructPseudoGenomes($$);	 #my %PGDict = ConstructPseudogenomes($clustersSeqFile,\%ClustAssign);
 sub WritePseudoGenomes($);	 #my $tempFile = WritePseudoGenomes(\%PGDict);
 sub RunBOND($);			 #my $tempFile = RunBOND($PGSeqFile);
-sub OutputResults($$);		 #OutputResults($oligFile,\%PGDict);
+sub CollapseBaits($$);	         #my @BaitRegions = CollapseBaits($oligFile,\%PGDict);
+sub OutputResults($);		 #OutputResults(\@BRList);
 
 #============================================================
 #Handling Input
 
-my %opts; #Golbal Hash with all options
+my %opts; #Global Hash with all options
 getopts('d:g:i:l:m:n:p:r:t:kvh',\%opts);
 
 if(@ARGV < 2 or exists $opts{h}){
-    my $Usage = basename($0). "Assignment.tsv ClustSeq.fna > CandidateProbes.tsv";
+    my $Usage = basename($0). "Assignment.tsv ClustSeq.fna > CandidateBaitRegions.tsv";
     if(exists $opts{h}){
         print STDERR "\n===Description\n".
             "Given a set of representative sequences and information about their heirarchical assignments\n".
@@ -150,7 +179,7 @@ if(@ARGV < 2 or exists $opts{h}){
             "Assignment.tsv\tA tab separated values with headers of ClusterID, TaxonID, and Penetrance\n".
             "ClustSeq.fna\tA fasta formated file with headers which match ClusterIDs in Assignment.tsv\n".
             "===Outputs\n".
-            "A tab separated file with headers of ProbeID, TaxonID, ClustID, Position, and Sequence\n".
+            "A tab separated file with headers of RegionID, TaxonID, ClustID, Position, and Sequence\n".
             "===Options\n".
             "-d dir\tiDirectory for temporary pseudo-genome files (Default $DEFAULT{d})\n".
             "-g str\tA string specifying the GC parameters (Default $DEFAULT{g})\n".
@@ -164,7 +193,7 @@ if(@ARGV < 2 or exists $opts{h}){
             "-n {-1,[1,∞)}\tThe maximum number of candidate probes per taxon, -1 is no limit (Default: -1)\n".
             "-p [0-100]\tThe minimum penetrance for inclusion (Default: $DEFAULT{p})\n".
             "-r [1-∞)\tThe maximum number of consectutive identities for non-co-targeting probes (Default: $DEFAULT{r})\n".
-            "-t [0-∞)\t The number of threads to use; 0 is system max (Default: $DEFAULT{t})\n".
+            "-t [0-∞)\tThe number of threads to use; 0 is system max (Default: $DEFAULT{t})\n".
             "===Flags\n".
             "-k\tKeep intermediary files\n".
             "-v\tVerbose Output\n".
@@ -270,7 +299,8 @@ my %ClusterAssignment = ParseAssignments($FileDict{Assignment});
 my %PseudoGenomeDict = ConstructPseudoGenomes($FileDict{ClustSeq},\%ClusterAssignment);
 $FileDict{PseudoGenome} = WritePseudoGenomes(\%PseudoGenomeDict);
 $FileDict{Oligos} = RunBOND($FileDict{PseudoGenome});
-OutputResults($FileDict{Oligos},\%PseudoGenomeDict);
+my @BaitRegionList = CollapseBaits($FileDict{Oligos},\%PseudoGenomeDict);
+OutputResults(\@BaitRegionList);
 
 #============================================================
 #Subroutines
@@ -454,15 +484,16 @@ sub RunBOND($){
     return $outfile;
 }
 
-sub OutputResults($$){
+sub CollapseBaits($$){
     my ($oligFile,$PGDictRef) = @_;
-    LogEvent("Outputing candidate probes...","INFO");
+    LogEvent("Collapsing contiguous candidate probes...","INFO");
     my $fh = OpenFileHandle($oligFile,"Raw Oligos","WARNING");
     if(!$fh){
         $oligFile->unlink_on_destroy(0);
         LogEvent("Failure to parse Raw Oligos, Saved to $oligFile", "ERROR");
     }
-    my $next_bait_id = 0;
+    my $candidate_probe_count = 0;
+    my @BRList;
     while(my $line = <$fh>){
         chomp($line);
         my ($tgtStr,$seq,undef,undef,$posStr,undef) = split(/\t/,$line);
@@ -472,8 +503,30 @@ sub OutputResults($$){
         $pos++;
         my $taxon_id = (sort keys %{$PGDictRef})[$index];
         my ($clust_id,$clust_pos) = $PGDictRef->{$taxon_id}->map_pos($pos);
-        my $bait_id = sprintf("BAIT_%0*d",$_ID_PADDING,$next_bait_id++);
-        print join("\t",($bait_id,$taxon_id,$clust_id,$clust_pos,$seq)),"\n";
+        $candidate_probe_count++;
+        my $brObj = BAITREGION->new(taxon_id => $taxon_id,clust_id => $clust_id,pos => $clust_pos, seq => $seq);
+        push(@BRList,$brObj);
     }
-    LogEvent("Outputted $next_bait_id candidate probes","INFO");
+    LogEvent("Read $candidate_probe_count candidate probes","INFO");
+    @BRList = sort {$a->taxon_id cmp $b->taxon_id or $a->clust_id cmp $b->clust_id or $a->pos <=> $b->pos} @BRList;
+    #Collapse contiguous probes together
+    for(my $i = 1; $i < @BRList; $i++){
+        if($BRList[$i-1]->isContig($BRList[$i])){
+            $BRList[$i-1]->seq($BRList[$i-1]->seq.substr($BRList[$i]->seq,-1));
+            splice(@BRList,$i,1);
+            $i--;
+        }
+    }
+    LogEvent("Collapsed probes into ".scalar(@BRList)." candidate bait regions","INFO");
+    return @BRList;
+}
+
+sub OutputResults($){
+    my $BRListRef = shift;
+    LogEvent("Outputting Bait Regions...","INFO");
+    for(my $i = 0; $i < @{$BRListRef}; $i++){
+        my $reg_id = sprintf("BR_%0*d",$_ID_PADDING,$i);
+        print  "$reg_id\t",$BRListRef->[$i]->toStr,"\n";
+    }
+    LogEvent("Done","INFO");
 }

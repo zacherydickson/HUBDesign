@@ -29,7 +29,7 @@ sub AssignTaxa($$);          #Usage: AssignTaxa($dendObj,\@clusterList);
 #Handling Input
 
 my %opts;
-getopts('g:G:w:t:v:h',\%opts);
+getopts('g:G:w:t:vh',\%opts);
 
 if(@ARGV < 1 or exists $opts{h}){
     my $Usage =  "Usage: ".basename($0). " [-options] ClusterInfo > Assignment.tsv";
@@ -51,7 +51,7 @@ if(@ARGV < 1 or exists $opts{h}){
 
             "-t INT\tNumber of Threads; 0 = sys_max [Default 1]\n".
             "===Flags\n".
-            "-v\tVerbose Output\n";
+            "-v\tVerbose Output\n".
             "-h\tDisplay this message an exits\n";
     } else{
         die "Usage: $Usage\n\tUse -h for more info\n";

@@ -109,14 +109,6 @@ foreach my $geneName (keys %GeneInfo){
     my $treeObj = ConstructTree($alnObj,$geneName);
     print STDERR "\tExtracting Clusters...\n" if(exists $opts{v});
     my @clusterList = ExtractClusters($seqListRef,$alnObj,$treeObj,$geneName);
-    my %Count;
-    foreach (@clusterList){
-        $Count{$_->uid} = 0 unless(exists $Count{$_->uid});
-        $Count{$_->uid}++;
-    }
-    while( my ($key,$value) = each %Count){
-        print STDERR "$key\t$value\n";
-    }
     foreach my $clusterObj (@clusterList){
         OutputCluster($clusterObj,$clustHandle,$SeqOObj);
     }
