@@ -1,50 +1,4 @@
 #!/usr/bin/perl
-package BAITREGION;
-use Class::Struct;
-
-struct (BAITREGION => {taxon_id => '$', clust_id => '$', pos => '$', seq => '$'});
-
-sub subbr(){
-    my ($self,$start,$end) = @_;
-    unless(defined $start and defined $end and $start <= $end and $start >= 1 and $end <= length($self->seq)){
-        die "Start and End must be in order and within the sequence in BAITREGION::subbr\n";
-    }
-    return BAITREGION->new(taxon_id => $self->taxon_id, clust_id => $self->clust_id, pos => $self->pos + $start - 1, seq => substr($self->seq,$start-1,$end - $start + 1));
-}
-
-#Assumes the input intervals are non-overlapping
-sub exclude(){
-    my ($self,$ivListRef) = @_;
-    my @children;
-    @{$ivListRef} = sort {$a->[0] <=> $b->[0]} @{$ivListRef};
-    my $offset = 0;
-    foreach my $iv (@{$ivListRef}){
-        my ($start, $end) = map {$_ - $offset} @{$iv};
-        $end--;
-        unless(defined $start and defined $end and $start <= $end and $start >= 1 and $end <= length($self->seq)){
-            die "Start($start) and End($end) must be in order and within the sequence(1-".length($self->seq).") in BAITREGION::exclude \n";
-        }
-        if($start > 1){
-            push(@children,$self->subbr(1,$start -1));
-        }
-        if($end < length($self->seq)){
-            $self = $self->subbr($end +1,length($self->seq));
-            $offset += $end;
-        } else{
-            $self = undef;
-            last;
-        }
-    }
-    push(@children,$self) if(defined $self);
-    return @children;
-}
-
-sub toStr(){
-    my $self = shift;
-    return join("\t",($self->taxon_id,$self->clust_id,$self->pos,$self->seq));
-}
-
-package MAIN;
 use warnings;
 use strict;
 use Bio::SeqIO;
@@ -55,8 +9,9 @@ use File::Temp;
 use lib File::Spec->catdir(
             File::Basename::dirname(File::Spec->rel2abs($0)),
             '..','lib');
-use HUBDesign qw(GetProcessorCount ProcessNumericOption OpenFileHandle);
+use HUBDesign qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
 use HUBDesign::Logger;
+use HUBDesign::BaitRegion;
 
 #============================================================
 #Declarations
@@ -118,31 +73,23 @@ foreach (keys %DEFAULT){
     $opts{$_} = exists $opts{$_} ? $opts{$_} : $DEFAULT{$_};
 }
 
+#Handle Verbosity
+$opts{v} = (exists $opts{v}) ? "INFO" : "WARNING";
+my $Logger = Logger->new(level => $opts{v});
+
 #Handle Simple Numeric Options 
 $opts{e} = ProcessNumericOption($opts{e},$DEFAULT{e},undef,undef,0,"e-value");
 $opts{l} = ProcessNumericOption($opts{l},$DEFAULT{l},1,undef,1,"Probe Length");
 $opts{t} = ProcessNumericOption($opts{t},$DEFAULT{t},0,undef,0,"Max Threads");
 
 #Ensure Threads is within system limits
-my $cpu_count = GetProcessorCount();
-if($cpu_count == -1){
-    LogEvent("Could not determine Sys_max threads: $!\n\t Can't fully validate max_threads\n","WARNING");
-    if($opts{t} == 0){
-        LogEvent("Sys_max threads unknown: proceeding with 1 thread","WARNING");
-        $opts{t} = 1;
-    }
-} elsif($opts{t} == 0 or $opts{t} > $cpu_count){
-    if($opts{t} > $cpu_count){
-        LogEvent("Max threads is greater than sys_max: proceeding with $cpu_count threads","WARNING");
-    }
-    $opts{t} = $cpu_count;
-}
-#Handle Verbosity
-$opts{v} = (exists $opts{v}) ? "INFO" : "WARNING";
+$opts{t} = ValidateThreadCount($opts{t});
 
 #Handle Command line arguments
 my %FileDict= (BRInfo => shift @ARGV);
 my @BlastDBList = @ARGV;
+
+$Logger->Log("Bait Region File ($FileDict{BRInfo}) doe not exits","ERROR") unless(-e$FileDict{BRInfo});
 
 #Prep parameters for logging
 my %params;
@@ -152,7 +99,7 @@ $params{'BlastDB Count'} = scalar(@BlastDBList);
 
 #============================================================
 #Main
-    my $Logger = Logger->new(level => $opts{v});
+
     $Logger->LogParameters(%params);
     my %BaitRegionDict = LoadBaitRegions($FileDict{BRInfo});
     $FileDict{Fasta_CBR} = OutputFasta(\%BaitRegionDict,"CBR");
@@ -173,6 +120,10 @@ $params{'BlastDB Count'} = scalar(@BlastDBList);
 #============================================================
 #Subroutines
 
+#Parses A Candidate Bait Region File loading those regions into memory
+#Inputs - Path to a tab delimited file with 5 columns: bait region id, taxon id, cluster id, position
+   #within cluster, and the regions sequence
+#Output - A hash with keys of bait region id and values of HUBDesign::BaitRegion objects
 sub LoadBaitRegions($){
     $Logger->Log("Loading candidate bait regions...","INFO");
     my $fh = OpenFileHandle(shift,"Candidates","ERROR");
@@ -186,14 +137,17 @@ sub LoadBaitRegions($){
             next;
         }
         $TaxonSet{$taxon_id} = 1;
-        $BRDict{$br_id} = BAITREGION->new(taxon_id => $taxon_id, clust_id => $clust_id, pos => $pos, seq => $seq);
+        $BRDict{$br_id} = BaitRegion->new(taxon_id => $taxon_id, clust_id => $clust_id, pos => $pos, seq => $seq);
     }
     my $message = sprintf("Loaded %d candidate bait regions for %d taxa",scalar(keys %BRDict),scalar(keys %TaxonSet));
     $Logger->Log($message,"INFO");
     return %BRDict;
 }
 
-    #my $tmpFile = OutputFasta(\$BRDict);
+#Given a dictionary of candidate bait regions, outputs a fasta formated file
+#Inputs - reference to a hash of HUBDesign::BaitRegion objects
+#       - a label for the fasta file, mostly for logging purposes
+#Output - A File::Temp object where the fasta sequence is written
 sub OutputFasta($$){
     my ($BRDictRef, $label) = @_;
     $Logger->Log("Writing candidate bait regions as fasta...","INFO");
@@ -211,7 +165,10 @@ sub OutputFasta($$){
     return $tmpFile;
 
 }
-    #my %ExIVDict = RunLCRFilter($cmd,$fastafile);
+
+#Given A fasta formatted set of sequences runs the lcr filter to identify lcr containing intervals
+#Inputs - A path/File::Temp object to a fasta formattted file
+#Output - A hash with keys of bait region id and values two-element array refs [start, end]
 sub RunLCRFilter($){
     my $file = shift;
     $Logger->Log("Filtering candidate bait regions for low complexity sequences...","INFO");
@@ -240,7 +197,11 @@ sub RunLCRFilter($){
     return %ExIVDict;
 }
 
-   #$ExcludeIntervals(\%BRDict,\%ExIVDict);
+#Given a hash of excludion intervals, modifies a hash of bait regions, breaking up larger regions which
+#contain intervals
+#Inputs - A reference to a hash of HUBDesign::BaitRegion objects
+#       - A reference to a hash of [start, end] array refs
+#Output - None, the bait region hash is modified in place
 sub ExcludeIntervals($$){
     my ($BRDictRef,$ExIVListRef) = @_;
     foreach my $br_id (keys %{$ExIVListRef}){
@@ -260,8 +221,10 @@ sub ExcludeIntervals($$){
     $Logger->Log($message,"INFO");
 }
 
-
-	#my %ExIVDict = RunBlastFilter($fastaFile,$blastdb);
+#Given a fasta formatted file and a database, runs blast to identify intervals for exclusion
+#Inputs - A path/File::Temp object to a fasta formattted file
+#       - A path to a blast database
+#Output - A hash with keys of bait region id and values two-element array refs [start, end]
 sub RunBlastFilter($$){
     my ($fasta,$db) = @_;
     $Logger->Log("Filtering candidate bait regions against $db ...","INFO");
@@ -302,15 +265,14 @@ sub RunBlastFilter($$){
             $length += $ivRef->[1] - $ivRef->[0] + 1;
         }
     }
-    #  foreach my $ivRef (@{$ExIVDict{BR_001102}}){
-    #            printf STDERR "s:%d\te:%d\n", $ivRef->[0], $ivRef->[1];
-    #        }
-    #        exit;
-    $Logger->Log("Identified $count hits totalling $length bp\n","INFO");
+    $Logger->Log("Identified $count intervals totalling $length bp\n","INFO");
     return %ExIVDict;
 
 }
 
+#Given a set of bait regions, outputs them
+#Inputs - A reference to a hash with keys of bait region id and values of HUBDesign::BaitRegion objects
+#Output - None, prints to STDOUT
 sub OutputResults($){
     my $BRListRef = shift;
     $Logger->Log("Outputting Bait Regions...","INFO");

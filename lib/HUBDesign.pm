@@ -8,8 +8,8 @@ require Exporter;
 our $VERSION = 1.00;
 our @ISA = qw(Exporter);
 our @EXPORT = ();
-our @EXPORT_OK = qw(OpenFileHandle GetProcessorCount ProcessNumericOption);
-our %EXPORT_TAGS = (All => [qw(&OpenFileHandle &GetProcessorCount &ProcessNumericOption)]);
+our @EXPORT_OK = qw(OpenFileHandle GetProcessorCount ProcessNumericOption ValidateThreadCount);
+our %EXPORT_TAGS = (All => [qw(&OpenFileHandle &GetProcessorCount &ProcessNumericOption &ValidateThreadCount)]);
 
 #Given a file path, opens it for reading and fails with the provided exit function if unsuccessful
 # The default exit function is die
@@ -41,6 +41,29 @@ sub GetProcessorCount(){
         close($handle);
     }
     return $cpu_count;
+}
+
+sub ValidateThreadCount($){
+    my $max_proc = shift;
+    my $cpu_count = GetProcessorCount();
+    my $message = undef;
+    if($cpu_count == -1){
+        $message = "Could not determine Sys_max threads: $!\n\t Can't fully validate max_threads\n";
+        if($max_proc == 0){
+            $message = "Sys_max threads unknown: proceeding with 1 thread";
+            $max_proc = 1;
+        }
+    } elsif($max_proc == 0 or $max_proc > $cpu_count){
+        if($max_proc > $cpu_count){
+            $message = "Max threads is greater than sys_max: proceeding with $cpu_count threads";
+        }
+        $max_proc = $cpu_count;
+    }
+    if(defined $message){
+        my ($sec,$min,$hour) = localtime;
+        printf STDERR "%02d:%02d:%02d - [%s] %s\n", ($hour,$min,$sec,"WARNING",$message);
+    }
+    return $max_proc;
 }
 
 sub ProcessNumericOption($$$$$$){
