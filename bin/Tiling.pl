@@ -1,40 +1,27 @@
 #!/usr/bin/perl
 use warnings;
 use strict;
-use File::Basename;
 use Bio::SeqIO;
+use Bio::TreeIO;
 use Scalar::Util qw(looks_like_number);
 use Getopt::Std;
 use Class::Struct;
 use POSIX;
 use sort 'stable';
+use File::Basename;
+use lib File::Spec->catdir(
+            File::Basename::dirname(File::Spec->rel2abs($0)),
+            '..','lib');
+use HUBDesign::Util qw(ProcessNumericOption OpenFileHandle);
+use HUBDesign::Logger;
 
-sub ProcessNumericOption($$$$$$);
-sub ProcessDelimStr_ListFile($$$$);
-sub PrintREGION($$);
-sub GetSortedRegions();
-sub sortMaxSpread(@);
-sub MinDistance($@);
-sub GetTilingDens($);                       #Usage: my TilingObj = GetTiling(seqLen);
-sub CalculateSpacing($$);
-sub CalculateNumBaits($$;$);
-sub GetBaitCount($@);                       #Usage sub GetMaximumBaitCount(('Min','Max','Tgt',$Int),@ListOfOrderedRegIDListRefs);
-sub GetRegionDensityByMode($$);             #Usage my $density = GetRegionDensityByMode($Mode,$regID);
-sub ApplyMaxRegionFilter(\%;$);
-sub OutputBaits(@);                         #Usage OutputBaits(@ListOfOrderedRegIDListRefs)
-sub DetermineTilingClass();                 #Usage my @OrgTilingClass = DetermineTilingClass();
-sub GetBaitCountsPerOrg();
-sub SetRegionTargetTiling(%);               #Usage SetRegionTargetTiling(%OrgTilingClass);
-sub CalculateWeightofRegionWithinOrg($$$);  #Usage: fncname($IdealBaitsPerOrg,$orgID,$regID);
-sub CalculateTilingDensity($$);             #Usage: fncname($regLen,$numBaits);
-sub TrimBaits($$);                           #Usage: $BaitsTrimmed = TrimBaits($NumBaitstoTrim);
-sub TrimBaitsFromOrganisms($$%);             #Usage: $BaitsTrimmed = TrimBaitsFromOrganism($densityMode,(Org1 => NumToRemove))
-sub ApplyMaxBaitPerOrgFilter(;$);           #Usage: 
-sub OptimizeMaxBaitsPerOrg();               
-sub OptimizeMaxRegionsPerOrg();
 
-sub PrintUpdate($$);
+#============================================================
+#Declarations
 
+my $MIN_BAITS_PER_ORG = 30;
+
+my %DEFAULT = (b => 0, d => 1, l => 75, n => 0, r => 0);
 
 #min = Minimum Possible Tiling Density
 #max = Maximum Possible Tiling Density
@@ -53,14 +40,42 @@ struct(TILING => {min => '$', max => '$', tgt => '$'});
 #Ex. A 150bp Sequence which has been trimmed to 37 baits at 35x coverage would have Len=149, Idx=0
 struct(REGION => {Org => '@', Tgt => '$', Seq => '$', Pos => '$',
         TDn => 'TILING', Cls => '$', Idx => '$', Len => '$'});
+sub PrintREGION($$); #Usage RegObj->PrintREGION($file Handle);
 
-my $Command = join(' ',($0,@ARGV));
+
+sub ProcessDelimStr_ListFile($$$$);
+sub LoadTree($);	                    #Usage my $TreeObj = LoadTree($file);
+sub LoadRegionInfo($$);                     #Usage my %RegionInfo = LoadRegionInfo($file,$TreeObj);
+sub GetDescendentLeaves($$);	            #Usage my @IdList = GetDescendentLeaves($taxon_id,$tree)
+sub GetSortedRegions();
+sub sortMaxSpread(@);
+sub MinDistance($@);
+sub GetTilingDens($);                       #Usage my TilingObj = GetTiling(seqLen);
+sub CalculateSpacing($$);
+sub CalculateNumBaits($$;$);
+sub GetBaitCount($@);                       #Usage sub GetMaximumBaitCount(('Min','Max','Tgt',$Int),@ListOfOrderedRegIDListRefs);
+sub GetRegionDensityByMode($$);             #Usage my $density = GetRegionDensityByMode($Mode,$regID);
+sub ApplyMaxRegionFilter(\%;$);
+sub OutputBaits(@);                         #Usage OutputBaits(@ListOfOrderedRegIDListRefs)
+sub DetermineTilingClass();                 #Usage my @OrgTilingClass = DetermineTilingClass();
+sub GetBaitCountsPerOrg();
+sub SetRegionTargetTiling(%);               #Usage SetRegionTargetTiling(%OrgTilingClass);
+sub CalculateWeightofRegionWithinOrg($$$);  #Usage fncname($IdealBaitsPerOrg,$orgID,$regID);
+sub CalculateTilingDensity($$);             #Usage fncname($regLen,$numBaits);
+sub TrimBaits($$);                          #Usage $BaitsTrimmed = TrimBaits($NumBaitstoTrim);
+sub TrimBaitsFromOrganisms($$%);            #Usage $BaitsTrimmed = TrimBaitsFromOrganism($densityMode,(Org1 => NumToRemove))
+sub ApplyMaxBaitPerOrgFilter(;$);           
+sub OptimizeMaxBaitsPerOrg();               
+sub OptimizeMaxRegionsPerOrg();
+
+#============================================================
+#Handling Input
 
 my %opts;
 getopts('DOb:d:l:n:p:r:aPSvh',\%opts);
 
 if(exists $opts{h} or @ARGV < 2){
-    my $Usage = "@{[basename($0)]} [-options] RegionInfo RegionSeq ... > TiledBaits.fna";
+    my $Usage = "@{[basename($0)]} [-options] Tree RegionInfo > TiledBaits.fna";
     if(exists $opts{h}){
         die "===Description\n".
             "\tGiven a set of Bait Regions and some metadata, outputs a set of baits which\n".
@@ -70,19 +85,20 @@ if(exists $opts{h} or @ARGV < 2){
             "===Usage\n".
             "\t$Usage\n".
             "===Required Inputs\n".
-            "\tRegionInfo\tA tab delimited file with 4 columns:\n".
-            "\t\tRegionID (matches fasta headers), Target Organism, Target Seq within organism , Position within Seq\n".
-           "\tRegionSeq\tA fasta formated file or set of files\n".
+            "\tTree\tThe tree detailing the relationships between taxon ids\n".
+            "\tRegionInfo\tA tab delimited file with 5 columns:\n".
+            "\t\tRegion ID, Taxon ID, Cluster ID, Position within Cluster, and Sequence\n".
            "===Options\n".
-           "\t-b INT[0,∞)\tThe maximum number of baits for any target organism [Default: 0 -> None]\n".
-           "\t-d INT[1,l]\tThe minimum tiling density for any bait region [Default: 1x]\n". 
-           "\t-l INT[1,∞)\tThe length of baits to output [Default: 75bp]\n".
-           "\t-n INT[0,∞)\tThe maximum number of baits in the output [Default: 0 -> None]\n".
+           "\t-b INT[0,∞)\tThe maximum number of baits for any target organism [Default: $DEFAULT{b}]\n".
+           "\t-d INT[1,l]\tThe minimum tiling density for any bait region [Default: $DEFAULT{d}x]\n". 
+           "\t-l INT[1,∞)\tThe length of baits to output [Default: $DEFAULT{l}bp]\n".
+           "\t-n INT[0,∞)\tThe maximum number of baits in the output[Default: $DEFAULT{n}]\n".
            "\t-p string\tA comma separated string or list file detailing the order of prescedence\n".
-           "\t\tfor target sequences. By default all are considered equal\n".
-           "\t-r INT[0,∞)\tThe maximum number of regions for any target organism [Default: 0 -> None]\n".
+           "\t\tfor clusters. By default all are considered equal\n".
+           "\t-r INT[0,∞)\tThe maximum number of regions for any target organism [Default: $DEFAULT{r}]\n".
+           "\tNote: For b, n, and r a value of zero indicates no maximum\n".
            "===Flags\n".
-           "\t-a\tAuto-detect Maximum and Regions Baits per Organism to improve Proportional Tiling\n".
+           "\t-a\tAuto-detect max regions and baits per Organism to improve Proportional Tiling\n".
            "\t-P\tDisable Proportional tiling, and instead find a maximum constant tiling\n".
            "\t-S\tSkip Region Sorting\n".
            "\t-v\tVerbose Output\n".
@@ -91,144 +107,70 @@ if(exists $opts{h} or @ARGV < 2){
         die "Usage: $Usage\n\tUse -h for more info\n";
     }
 }
+my %FileDict;
+@FileDict{qw(Tree BRInfo)} = @ARGV[0 .. 1];
 
-my ($MetadataFile,@FastaFileList) =  @ARGV;
+foreach (keys %DEFAULT){
+    $opts{$_} = exists $opts{$_} ? $opts{$_} : $DEFAULT{$_};
+}
 
-##INTERNAL VARS
+#Init Logger Verbosity
+$opts{v} = (exists $opts{v}) ? "INFO" : "WARNING";
+$opts{v} = "DEBUG" if(exists $opts{D});
+my $Logger = HUBDesign::Logger->new(level => $opts{v});
 
-my $bDebug = (exists $opts{D}) ? 1 : 0;
-my $OutMode = ('TaxaInfo','Baits')[exists $opts{O} ? 0 : 1];
-my $minBaitsPerOrg = 30;
 
-## Process Input
+## Process Simple Numeric Options
 my $maxBaitsPerOrg = ProcessNumericOption($opts{b},0,0,undef,1,"Maximum Baits per Organism");
 my $baitLen = ProcessNumericOption($opts{l},75,1,undef,1,"BaitLength");
 my $minDensity = ProcessNumericOption($opts{d},1,1,$baitLen,1,"Minimum Tiling Density");
 my $maxBaits = ProcessNumericOption($opts{n},0,0,undef,1,"Maximum Baits");
 my $maxRegPerOrg = ProcessNumericOption($opts{r},0,0,undef,1,"Maximum Regions per Organism");
+## Handle Cluster Order
 my @TargetSeqOrder = ProcessDelimStr_ListFile($opts{p},",",[],"Target Sequence Order");
 if(exists $opts{a}){
     if(exists $opts{P}){
-        warn "[WARNING] Auto-detect maxBaitsPerOrg option is useless if proportional tiling is disabled\n";
+        $Logger->Log("Auto-detect option is useless if proportional tiling is disabled","WARNING");
     }
     if($maxBaitsPerOrg){
-        warn "[WARNING] Auto-detect maxBaitsPerOrg overules user specification: Auto-detecting\n";
+        $Logger->Log("Auto-detect overuling specified maxBaitsPerOrg","WARNING");
         $maxBaitsPerOrg = 0;
     }
     if($maxRegPerOrg){
-        warn "[WARNING] Auto-detect maxRegPerOrg overules user specification: Auto-detecting\n";
+        $Logger->Log("Auto-detect overuling specified maxRegPerOrg","WARNING");
         $maxRegPerOrg = 0;
     }
 }
 my $bRegSort = exists $opts{S} ? 0 : 1;
+my $bDebug = (exists $opts{D}) ? 1 : 0;
+my $OutMode = ('TaxaInfo','Baits')[exists $opts{O} ? 0 : 1];
 
-my $InitTime = time;
-my $LastTime = $InitTime;
-my ($sec,$min,$hour,$mday,$mon,$year) = localtime($InitTime);
-my @abbMon = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
-$year += 1900;
-if(exists $opts{v}){
-    print STDERR "[INFO] Initialized at $hour:$min:$sec on $mday $abbMon[$mon] $year\n"; 
-    my @tmp = ("=") x 80;
-    print STDERR join("",@tmp),"\n";
-    my $Str = "[INFO] Running Tiling Regions with the following parameters:\n";
-    $Str .= "\tcmd:\t\t$Command\n";
-    $Str .= "\tmaxBaitsPerOrg:\t$maxBaitsPerOrg\n" if($maxBaitsPerOrg);
-    $Str .= "\tmaxBaitsPerOrg:\tAuto-detect\n" if(exists $opts{a});
-    $Str .= "\tbaitLen:\t$baitLen\n";
-    $Str .= "\tminDensity:\t$minDensity\n";
-    $Str .= "\tmaxBaits:\t$maxBaits\n" if($maxBaits);
-    $Str .= "\tmaxRegPerOrg:\t$maxRegPerOrg\n" if($maxRegPerOrg);
-    $Str .= "\tmaxRegPerOrg:\tAuto-detect\n" if(exists $opts{a});
-    $Str .= "\tTargetSeqOrder:\t@{[join(',',@TargetSeqOrder)]}\n" if(@TargetSeqOrder);
-    $Str .= "\tTilingMode:\t@{[(exists $opts{P} ? 'Maximal' : 'Proportional')]}\n";
-    $Str .= "\tMetadata:\t$MetadataFile\n";
-    $Str .= "\tSequenceFiles:\t@{[join(',',@FastaFileList)]}\n";
-    print STDERR $Str;
-    PrintUpdate("Loading Region Metadata",0);
-}
+#Log Parameters
+my %params = (  maxBaitsPerOrg => ($maxBaitsPerOrg) ? $maxBaitsPerOrg : "∞",
+                baitLen => $baitLen, minDensity => $minDensity,
+                maxBaits => $maxBaits, 
+                maxRegPerOrg => ($maxRegPerOrg) ? $maxRegPerOrg : "∞",
+                TargetSeqOrder => (@TargetSeqOrder) ? join(",",@TargetSeqOrder) : "No Order",
+                TilingMode => (exists $opts{P}) ? 'Maximal' : 'Proportional',
+                RegionInfoFile => $FileDict{BRInfo},
+                TreeFile => $FileDict{Tree});
+@params{qw(maxBaitsPerOrg maxRegPerOrg)} = ("Auto-Detect") x 2 if(exists $opts{a});
+$Logger->LogParameters(%params);
 
+#============================================================
+#Main
 
-## Load Metadata
-my %BaitRegionInfo; # Hash with keys of region ids and values of REGION
-if(open(my $fh,$MetadataFile)){
-    while(my $line = <$fh>){
-        chomp($line);
-        my ($id,$orgstr,$target,$pos) = split(/\t/,$line);
-        if(exists $BaitRegionInfo{$id}){
-            warn "[WARNING] Multiple Metadata entries present for $id: Only the first is used\n";
-        } else{
-            $BaitRegionInfo{$id} = REGION->new(Org => [split(",",$orgstr)],Tgt => $target,Pos=>$pos,Idx=>0);
-        }
-    }
-    close($fh);
-} else {
-    die "[ERROR] Could not open Metadata file - $MetadataFile:$!\n";
-}
-
-if(exists $opts{v}){
-    PrintUpdate("Loaded Metadata for @{[scalar(keys %BaitRegionInfo)]} Bait Regions",1);
-    PrintUpdate("Loading Sequences",0);
-}
-
-## Load Sequences
-my $seqCount =0;
-foreach my $file (@FastaFileList){
-    die "ERROR: Fasta File - $file does not exist\n" unless( -e $file);
-    my $IN = Bio::SeqIO->new(-file => $file, -format => 'fasta');
-    while (my $seqObj = $IN->next_seq){
-        my $id = $seqObj->id;
-        if(exists $BaitRegionInfo{$id}){
-            $seqCount++;
-            $BaitRegionInfo{$id}->Seq($seqObj->seq);
-            $BaitRegionInfo{$id}->Len(length($seqObj->seq));
-            $BaitRegionInfo{$id}->TDn(GetTilingDens(length($seqObj->seq)));
-        } else {
-            warn "[WARNING] No metadata provided for sequence $id: Ignoring this sequence\n";
-        }
-    }
-}
-
-##Ignore any metadata from regions with no sequence
-foreach my $regID (keys %BaitRegionInfo){
-    delete $BaitRegionInfo{$regID} unless (defined $BaitRegionInfo{$regID}->Len);
-}
-
-if(exists $opts{v}){
-    PrintUpdate("Loaded $seqCount Sequences",1);
-    PrintUpdate("Sorting Regions within Organisms",0);
-}
-
-## MAIN PROCESSING
-my $CalcTime = time;
-
-#Define order of regions within taxa
-my $SortTime = time;
+my $TreeObj = LoadTree($FileDict{Tree});
+my %BaitRegionInfo = LoadRegionInfo($FileDict{BRInfo},$TreeObj);
 my %RegionOrder = GetSortedRegions();
-
-$LastTime = $SortTime;
-PrintUpdate("Regions Sorted",1) if(exists $opts{v});
-if($maxRegPerOrg){
-    PrintUpdate("Applying Maximum Region Per Organism Filter",0) if(exists $opts{v});
-    ApplyMaxRegionFilter(%RegionOrder);
-    my %UniqRegID;
-    @UniqRegID{@{$_}} = (1) x @{$_} foreach((values %RegionOrder));
-    if(exists $opts{v}){
-        PrintUpdate("Filtered out @{[scalar(keys %BaitRegionInfo) - scalar(keys %UniqRegID)]} Regions",1);
-    }
-}
+ApplyMaxRegionFilter(%RegionOrder) if($maxRegPerOrg);
 my $AbsMaxBaits = GetBaitCount('Max',(values %RegionOrder));
-if($maxBaitsPerOrg){
-    PrintUpdate("Applying Maximum Bait Per Organism Filter",0) if(exists $opts{v});
-    my $PreMaxBaits = $AbsMaxBaits;
-    ApplyMaxBaitPerOrgFilter();
-    $AbsMaxBaits = GetBaitCount('Max',(values %RegionOrder));
-    PrintUpdate("Filtered out @{[$PreMaxBaits - $AbsMaxBaits]} Baits",1) if(exists $opts{v});
-}
+ApplyMaxBaitPerOrgFilter() if($maxBaitsPerOrg);
+
 my %OrgTilingClass;
 if($maxBaits && $AbsMaxBaits > $maxBaits){
     if(exists $opts{P}){ #Select maximal tiling keeping # Baits below thresh
-        PrintUpdate("Determining Maximal Constant Tiling Density",0) if(exists $opts{v});
+        $Logger->Log("Determining Maximal Constant Tiling Density","INFO");
         my $density = $minDensity;
         $density++ while(GetBaitCount($density+1,(values %RegionOrder)) <= $maxBaits);
         foreach my $regID (keys %BaitRegionInfo){
@@ -238,63 +180,37 @@ if($maxBaits && $AbsMaxBaits > $maxBaits){
             $tgt = ($tgt > $max) ? $max : $tgt;
             $BaitRegionInfo{$regID}->TDn->tgt($tgt);
         }
-        PrintUpdate("Found Maximal Constant Tiling Density at ${density}x",1) if(exists $opts{v});
+        $Logger->Log("Found Maximal Constant Tiling Density at ${density}x","INFO");
         (undef,%OrgTilingClass) = DetermineTilingClass();
     } else { #Scale Tiling to balance #Baits per Org
          if(exists $opts{a}){
-             PrintUpdate("Optimizing Max Regions Per Organism",0) if(exists $opts{v});
-             my $OptimTime = time;
              OptimizeMaxRegionsPerOrg();
-             $LastTime = $OptimTime;
-             PrintUpdate("Found Optimum at $maxRegPerOrg Regions Per Organism",1) if(exists $opts{v});
-             PrintUpdate("Optimizing Max Baits Per Organism",0) if(exists $opts{v});
-             $OptimTime = time;
              OptimizeMaxBaitsPerOrg();
-             $LastTime = $OptimTime;
-             PrintUpdate("Found Optimum at $maxBaitsPerOrg Baits Per Organism",1) if(exists $opts{v});
          }
-         PrintUpdate("Selecting Proportional Tiling Densities",0) if(exists $opts{v});
+         $Logger->Log("Selecting proportional tiling densities...","INFO");
          my $Ideal;
          ($Ideal,%OrgTilingClass) = DetermineTilingClass();
          SetRegionTargetTiling(%OrgTilingClass);
          if(exists $opts{v}){
              $Ideal = sprintf("%.0f",$Ideal);
-             PrintUpdate("Balanced Tiling Densities Target $Ideal Baits per Organism",0);
+             $Logger->Log("Balanced tiling densities target $Ideal baits per organism","INFO");
          }
     }
-    #foreach (values %BaitRegionInfo){
-    #    PrintREGION($_,*STDERR);
-    #}
     my $curBaits = GetBaitCount('Tgt',(values %RegionOrder));
     while($curBaits > $maxBaits){
-        PrintUpdate("Currently have $curBaits: Trimming Baits down to $maxBaits",0) if(exists $opts{v});
-        my %Before = GetBaitCountsPerOrg();
+        $Logger->Log("Currently have $curBaits: Trimming baits down to $maxBaits...","INFO");
         TrimBaits('Tgt',$curBaits - $maxBaits);
-        my %After = GetBaitCountsPerOrg();
-        for my $org (keys %Before){
-            foreach my $cls (('min','max','tgt')){
-                if($Before{$org}->{$cls} < $After{$org}->{$cls}){
-                    print STDERR "$org:$cls: $Before{$org}->{$cls} -> $After{$org}->{$cls}\n"
-                }
-            }
-        }
         my $nowBaits = GetBaitCount('Tgt',(values %RegionOrder));
         if(exists $opts{v}){
-            PrintUpdate("Trimmed @{[$curBaits - $nowBaits]} Baits",1);
+            $Logger->Log("Trimmed @{[$curBaits - $nowBaits]} baits","INFO");
         }
         $curBaits = $nowBaits;
     }
 } elsif($maxBaits) {
-    warn "[INFO] Maximum Possible Baits is ≤ specified maximum : All baits to be output at maximum density\n";
+    $Logger->Log("Maximum Possible Baits is ≤ specified maximum : All baits to be output at maximum density","WARNING");
     foreach my $RegObj (values %BaitRegionInfo){
         $RegObj->TDn->tgt($RegObj->TDn->max);
     }
-}
-$LastTime=$CalcTime;
-if(exists $opts{v}){
-    my $BaitCount = GetBaitCount('Tgt',(values %RegionOrder));
-    PrintUpdate("Calculations Complete",1);
-    PrintUpdate("Outputting $BaitCount Baits",0);
 }
 if($OutMode eq 'Baits'){
     OutputBaits((values %RegionOrder));
@@ -302,53 +218,23 @@ if($OutMode eq 'Baits'){
     my %BaitCountPerOrg = GetBaitCountsPerOrg();
     foreach my $org (sort {$BaitCountPerOrg{$a}->{tgt} <=> $BaitCountPerOrg{$b}->{tgt}} keys %BaitCountPerOrg){
         print "$org\t$BaitCountPerOrg{$org}->{tgt}\t$OrgTilingClass{$org}\n";
-        #if($org eq '478820'){
-        #    foreach my $regID (@{$RegionOrder{$org}}){
-        #        print STDERR"ID: $regID\n";
-        #        PrintREGION($BaitRegionInfo{$regID},*STDERR);
-        #    }
-        #}
     }
 }
-if(exists $opts{v}){
-    PrintUpdate("Done Outputing Baits",1);
-    $LastTime=$InitTime;
-    PrintUpdate("Processing complete",1);
-    my @tmp = ("=") x 80;
-    print STDERR join("",@tmp),"\n";
-}
 
+$Logger->Log("Done","INFO");
 
-## FUNCTION DEFINITIONS
-
-sub ProcessNumericOption($$$$$$){
-    print STDERR "[DEBUG] ProcessNumericOption\n" if($bDebug);
-    my($val,$default,$min,$max,$bInt,$varName) = @_;
-    return $default unless(defined $val);
-    if(looks_like_number($val)){
-        if(!$bInt or $val == int($val)){
-            if(!defined $min or $val >= $min){
-                if(!defined $max or $val <= $max){
-                    return $val;
-                }
-            }
-        }
-    }
-    my $message = sprintf("%s must be a%s between %s and %s",$varName,
-       ($bInt ? "n integer" : " value"),(defined $min ? $min : "-∞"),(defined $max ? $max : "∞")); 
-    die "[ERROR] $message\n";
-}
-
+#============================================================
+#Subroutines
 
 sub ProcessDelimStr_ListFile($$$$){
-    print STDERR "[DEBUG] ProcessDelimStr_ListFile\n" if($bDebug);
+    $Logger->Log("ProcessDelimStr_ListFile","DEBUG");
     my($val,$delim,$default,$varName) = @_;
     return @{$default} unless(defined $val);
     my @valList = split($delim,$val);
     my @Output;
     foreach my $file (@valList){
         if(-e $file){
-            open(my $fh, $file) or die "[ERROR] Could not open $varName file - $file: $!\n"; 
+            my $fh = OpenFileHandle($file,$varName,"ERROR");
             my @lines = <$fh>;
             chomp(@lines);
             push(@Output,@lines);
@@ -360,9 +246,8 @@ sub ProcessDelimStr_ListFile($$$$){
     return @Output;
 }
 
-
 sub PrintREGION($$){
-    print STDERR "[DEBUG] PrintREGION\n" if($bDebug);
+    $Logger->Log("PrintREGION","DEBUG");
     my ($Reg,$fh) = (@_);
     my $oldfh = select($fh);
     print "Org: ".join(',',@{$Reg->Org})."\n";
@@ -384,20 +269,60 @@ sub PrintREGION($$){
     select($oldfh);
 }
 
+
+sub LoadTree($){
+    my $file = shift;
+    my $TreeIOObj = Bio::TreeIO->new(-file => $file);
+    return $TreeIOObj->next_tree;
+}
+
+sub LoadRegionInfo($$){
+    my ($file,$treeObj) = @_;
+    $Logger->Log("Loading bait regions...","INFO");
+    my %BRInfo; # Hash with keys of region ids and values of REGION
+    my $fh = OpenFileHandle($file,"RegionInfo");
+    while(my $line = <$fh>){
+        chomp($line);
+        my ($id,$taxon_id,$target,$pos,$seq) = split(/\t/,$line);
+        if(exists $BRInfo{$id}){
+            $Logger->Log("Ignoring additional entries for region $id on line $.","WARNING");
+            next;
+        }
+        my @orgList = GetDescendentLeaves($taxon_id,$treeObj);
+        @orgList = ($taxon_id) unless (@orgList);
+        $BRInfo{$id} = REGION->new(Org => \@orgList,Tgt => $target,Pos=>$pos,Idx=>0,Seq=>$seq,
+            Len => length($seq),TDn => GetTilingDens(length($seq)));
+    }
+    close($fh);
+    $Logger->Log("Loaded @{[scalar(keys %BRInfo)]} bait regions","INFO");
+    return %BRInfo;
+}
+
+sub GetDescendentLeaves($$){
+    my ($taxon_id,$treeObj) = @_;
+    my @leaves;
+    my ($node) = $treeObj->find_node(-id => $taxon_id);
+    return () unless (defined $node);
+    foreach my $child ($node->get_all_Descendents){
+       push(@leaves,$child->id) if($child->is_Leaf); 
+    }
+    return @leaves;
+}
+
 sub GetSortedRegions() {
-    print STDERR "[DEBUG] GetSortedRegions\n" if($bDebug);
-    my %RegionOrder;
+    $Logger->Log("Sorting regions within organisms..","INFO");
+    my %RegOrder;
     ##Assign each region to its organism
     foreach my $regID (sort keys %BaitRegionInfo){
         my $RegionObj = $BaitRegionInfo{$regID};
         foreach my $org (@{$RegionObj->Org}){
-            unless(exists $RegionOrder{$org}){
-                $RegionOrder{$org} = [];
+            unless(exists $RegOrder{$org}){
+                $RegOrder{$org} = [];
             }
-            push(@{$RegionOrder{$org}},$regID);
+            push(@{$RegOrder{$org}},$regID);
         }
     }
-    return %RegionOrder unless($bRegSort);
+    return %RegOrder unless($bRegSort);
     my %TargetSeqRank;
     if(@TargetSeqOrder){
         for(my $i = 0; $i < @TargetSeqOrder; $i++){
@@ -405,18 +330,17 @@ sub GetSortedRegions() {
         }
     }
     my $OrgCounter = 0;
-    my $OrgCount = scalar(keys %RegionOrder);
-    while (my ($org,$idListRef) = each %RegionOrder){
+    my $OrgCount = scalar(keys %RegOrder);
+    my $LastTime = time;
+    while (my ($org,$idListRef) = each %RegOrder){
         my $elapsed = time - $LastTime;
         $OrgCounter++;
-        if($opts{v} and $elapsed > 10){
-            PrintUpdate("Now sorting $org ($OrgCounter/$OrgCount)",1);
+        if($elapsed > 10){
+            $Logger->Log("Now sorting $org ($OrgCounter/$OrgCount)","INFO");
         }
         ##Sort first by Size - Prioritizing Small Regions
-        #PrintUpdate("Size Sort $org ($OrgCounter/$OrgCount)",1) if(exists $opts{v});
         @{$idListRef} = sort {$BaitRegionInfo{$a}->Len <=> $BaitRegionInfo{$b}->Len} @{$idListRef};
         ##Sort such that maximal spacing is maintained (Stable sort: Size to break ties)
-        #PrintUpdate("Position Sort $org ($OrgCounter/$OrgCount)",1) if(exists $opts{v});
         my @idxPosList;
         for(my $i = 0; $i < @{$idListRef}; $i++){
             push(@idxPosList,{idx => $i, pos => $BaitRegionInfo{$idListRef->[$i]}});
@@ -424,7 +348,6 @@ sub GetSortedRegions() {
         @idxPosList = sortMaxSpread(@idxPosList);
         @{$idListRef} = (@{$idListRef})[map {$_->{idx}} @idxPosList];
         ###Sort in order of target precedence (Stable sort : Spacing then Size to break ties)
-        #PrintUpdate("Target Sort $org ($OrgCounter/$OrgCount)",1) if(exists $opts{v});
         if(@TargetSeqOrder){
             foreach  my $regID (@{$idListRef}){
                 unless(exists $TargetSeqRank{$BaitRegionInfo{$regID}->Tgt}){
@@ -434,14 +357,13 @@ sub GetSortedRegions() {
             @{$idListRef} = sort {$TargetSeqRank{$BaitRegionInfo{$a}->Tgt} <=> $TargetSeqRank{$BaitRegionInfo{$b}->Tgt}} @{$idListRef}
         }; 
         ##Sort in order of specificiy - Prioritizing fewer target organisms (Stable Sort)
-        #PrintUpdate("Target Sort $org ($OrgCounter/$OrgCount)",1) if(exists $opts{v});
         @{$idListRef} = sort {scalar(@{$BaitRegionInfo{$a}->Org}) <=> scalar(@{$BaitRegionInfo{$b}->Org})} @{$idListRef};
     }
-    return %RegionOrder;
+    return %RegOrder;
 }
 
 sub sortMaxSpread(@){
-    print STDERR "[DEBUG] sortMaxSpread\n" if($bDebug);
+    $Logger->Log("sortMaxSpread","DEBUG");
     my @regList = @_;
     @regList = sort {$a->{pos} <=> $b->{pos}} @regList;
     my @pairList = ([0,$#regList]);
@@ -470,43 +392,8 @@ sub sortMaxSpread(@){
     return @output;
 }
 
-#sub sortMaxSpread(@){
-#    print STDERR "[DEBUG] sortMaxSpread\n" if($bDebug);
-#    my @regList = @_;
-#    @regList = sort {$a->{pos} <=> $b->{pos}} @regList;
-#    my $m = int($#regList/2);
-#    my @posList = ($regList[$m]->{pos});
-#    my @output = ($regList[$m]);
-#    if($m > 0 and $m < $#regList){
-#        @regList = @regList[(0 .. ($m -1), ($m + 1) .. $#regList)];
-#    } elsif($m == 0 and @regList == 1){
-#        shift(@regList);
-#    } elsif($m == 0){
-#        @regList = @regList[1 .. $#regList];
-#    } else{
-#        @regList = @regList[0 .. ($#regList -1)];
-#    }
-#    while(@regList){
-#        @regList = sort {MinDistance($b->{pos},@posList) <=> MinDistance($a->{pos},@posList)} @regList;
-#        push(@posList,$regList[0]->{pos});
-#        push(@output,shift(@regList));
-#    }
-#    return @output;
-#}
-
-
-#sub MinDistance($@){
-#    print STDERR "[DEBUG] MinDistance\n" if($bDebug);
-#    my($pos,@posList) = @_;
-#    my $min = undef;
-#    foreach my $loc (@posList){
-#        $min = abs($pos - $loc) if(!defined($min) or abs($pos - $loc) < $min);
-#    }
-#    return $min;
-#}
-
 sub GetTilingDens($){
-    print STDERR "[DEBUG] GetTilingDens\n" if($bDebug);
+    $Logger->Log("GetTilingDens","DEBUG");
     my ($regLen) = @_;
     my $maxDen = ($regLen >= 2*$baitLen-1) ? $baitLen : $regLen-$baitLen+1;
     my $minDen = ($maxDen < $minDensity) ? $maxDen : $minDensity;
@@ -514,7 +401,7 @@ sub GetTilingDens($){
 }
 
 sub CalculateSpacing($$){
-    print STDERR "[DEBUG] CalculateSpacing(@_) @ @{[ caller ]}\n" if($bDebug);
+    $Logger->Log("CalculateSpacing(@_) @ @{[ caller ]}","DEBUG");
     my ($regLen,$density) = @_;
     return $baitLen if ($density == 1);
     return ($regLen < 2*$baitLen) ? floor(($regLen - $baitLen)/($density-1)) : floor(($baitLen - 1)/($density - 1));
@@ -522,18 +409,18 @@ sub CalculateSpacing($$){
 }
 
 sub CalculateNumBaits($$;$){
-    print STDERR "[DEBUG] CalculateNumBaits(@_) @ @{[ caller ]}\n" if($bDebug);
+    $Logger->Log("CalculateNumBaits(@_) @ @{[ caller ]}","DEBUG");
     my ($regLen,$density,$regID) = @_;
     my $spacing = CalculateSpacing($regLen,$density);
     if(!$spacing && $bDebug){
-        print STDERR "ID: $regID\n";
+        $Logger->Log("ID: $regID","DEBUG");
         PrintREGION($BaitRegionInfo{$regID},*STDERR);
     }
     return ceil(($regLen - $baitLen + 1) / $spacing);
 }
 
 sub GetBaitCount($@){
-    print STDERR "[DEBUG] GetBaitCount(@_) @ @{[ caller ]}\n" if($bDebug);
+    $Logger->Log("GetBaitCount(@_) @ @{[ caller ]}","DEBUG");
     my $densMode = shift(@_);
     my %UniqRegID;
     @UniqRegID{@{$_}} = (1) x @{$_} foreach(@_);
@@ -546,7 +433,7 @@ sub GetBaitCount($@){
 }
 
 sub GetBaitCountsPerOrg(){
-    print STDERR "[DEBUG] GetBaitCountsPerOrg\n" if($bDebug);
+    $Logger->Log("GetBaitCountsPerOrg","DEBUG");
     my %BaitCountsPerOrg;
     while( my ($org,$regionOrderRef) = each %RegionOrder){
         my %Count = (min => 0, max => 0, tgt => 0);
@@ -563,7 +450,7 @@ sub GetBaitCountsPerOrg(){
 }
 
 sub GetRegionDensityByMode($$){
-    print STDERR "[DEBUG] GetRegionDensityByMode(@_) @{[ caller ]}\n" if($bDebug);
+    $Logger->Log("GetRegionDensityByMode(@_) @{[ caller ]}","DEBUG");
     my($densMode,$regID) = @_;
     my $density;
     if($densMode eq 'Max'){
@@ -580,16 +467,17 @@ sub GetRegionDensityByMode($$){
             $density = $BaitRegionInfo{$regID}->TDn->max;
         }
     } else {
-        die "Unknown density Mode: $densMode\n";
+        $Logger->Log("Unknown density Mode: $densMode","ERROR");
     }
     return $density;
 }
 
 sub ApplyMaxRegionFilter(\%;$){
-    print STDERR "[DEBUG] ApplyMaxRegionFilter\n" if($bDebug);
-    #maxRegPerOrg is assumed to be non-zero
     my($RegionOrderRef,$bQuiet) = @_;
     $bQuiet = 0 unless(defined $bQuiet);
+    my $loglevel = ($bQuiet) ? "DEBUG" : "INFO";
+    $Logger->Log("Applying Maximum Regions Per Organism Filter",$loglevel);
+    #maxRegPerOrg is assumed to be non-zero
     #ID All Organisms with > Threshold Regions
     my %OrgAboveThresh;
     while(my ($org,$orderRef) = each %{$RegionOrderRef}){
@@ -621,14 +509,18 @@ sub ApplyMaxRegionFilter(\%;$){
             }
         }
         if(exists $OrgAboveThresh{$org} and !$bQuiet){
-            warn "[WARNING] Could not acheive at most $maxRegPerOrg regions for $org, due to region sharing: acheived @{[$maxRegPerOrg + $OrgAboveThresh{$org}]} regions\n";
+            my $message = "Could not acheive at most $maxRegPerOrg regions for $org, due to region sharing: acheived @{[$maxRegPerOrg + $OrgAboveThresh{$org}]} regions";
+            $Logger->Log($message,"WARNING");
         }
     }
+    my %UniqRegID;
+    @UniqRegID{@{$_}} = (1) x @{$_} foreach((values %RegionOrder));
+    $Logger->Log("Filtered out @{[scalar(keys %BaitRegionInfo) - scalar(keys %UniqRegID)]} Regions",$loglevel);
 }
 
-
 sub OutputBaits(@){
-    print STDERR "[DEBUG] OutputBaits\n" if($bDebug);
+    my $BaitCount = GetBaitCount('Tgt',(values %RegionOrder));
+    $Logger->Log("Outputting $BaitCount Baits","INFO");
     my %UniqRegID;
     @UniqRegID{@{$_}} = (1) x @{$_} foreach(@_);
     my $OUT = Bio::SeqIO->newFh(-format => "fasta");
@@ -650,7 +542,7 @@ sub OutputBaits(@){
 
 
 sub DetermineTilingClass(){
-    print STDERR "[DEBUG] DetermineTilingClass\n" if($bDebug);
+    $Logger->Log("DetermineTilingClass","DEBUG");
     my $nOrg = scalar(keys %RegionOrder);
     my %UniqRegID;
     @UniqRegID{@{$_}} = (1) x @{$_} foreach((values %RegionOrder));
@@ -660,15 +552,12 @@ sub DetermineTilingClass(){
     my @Class = ('Med') x $nOrg;
     my $nMedClass = $nOrg;
     my %BaitCountPerOrg = GetBaitCountsPerOrg();
-    #while(my ($org, $countObj) = each %BaitCountPerOrg){
-    #    print STDERR "$org: min->$countObj->{min} - max->$countObj->{max}\n";
-    #}
     my %SeenIdeal;
     my $Ideal;
     while(!$bDone){
         $bDone = 1;
         if(!$nMedClass){
-            warn "[WARNING] No Med Class Organisms: All orgs at either minimum or maximum tiling\n";
+            $Logger->Log("No Med Class Organisms: All orgs at either minimum or maximum tiling","WARNING");
             last;
         }
         $Ideal = $MedClassBaits / $nMedClass;
@@ -724,7 +613,7 @@ sub DetermineTilingClass(){
 
 
 sub SetRegionTargetTiling(%){
-    print STDERR "[DEBUG] SetRegionTargetTiling\n" if($bDebug);
+    $Logger->Log("SetRegionTargetTiling","DEBUG");
     my %OrgTilingClass = @_;
     my $nOrg = scalar(keys %OrgTilingClass);
     my $MedClassBaits = $maxBaits;
@@ -790,7 +679,6 @@ sub SetRegionTargetTiling(%){
                 my $nBaits = (1-$Weight) * CalculateNumBaits($regLen,$BaitRegionInfo{$regID}->TDn->min,$regID);
                 $nBaits += $Weight * CalculateNumBaits($regLen,$BaitRegionInfo{$regID}->TDn->max,$regID);
                 my $density = CalculateTilingDensity($regLen,$nBaits);
-                #print STDERR "$regID\t$Weight\t$nBaits\t$density\n";
                 $BaitRegionInfo{$regID}->TDn->tgt(ceil($density));
             }
         }
@@ -798,7 +686,7 @@ sub SetRegionTargetTiling(%){
 }
 
 sub CalculateWeightofRegionWithinOrg($$$){
-    print STDERR "[DEBUG] CalculateWeightofRegionWithinOrg\n" if($bDebug);
+    $Logger->Log("CalculateWeightofRegionWithinOrg","DEBUG");
     my($Ideal,$org,$regID) = @_;
     my $distFromIdeal = $Ideal;
     my $potential = 0;
@@ -825,7 +713,7 @@ sub CalculateWeightofRegionWithinOrg($$$){
 
 
 sub CalculateTilingDensity($$){
-    print STDERR "[DEBUG] CalculateTilingDensity\n" if($bDebug);
+    $Logger->Log("CalculateTilingDensity","DEBUG");
     my ($regLen,$nBaits) = @_;
     if($nBaits + 1 == ceil(($regLen+1)/$baitLen)){
         return 1;
@@ -837,9 +725,10 @@ sub CalculateTilingDensity($$){
 }
 
 sub ApplyMaxBaitPerOrgFilter(;$){
-    print STDERR "[DEBUG] ApplyMaxBaitPerOrgFilter\n" if($bDebug);
     my $bQuiet = shift(@_);
     $bQuiet = 0 unless($bQuiet);
+    my $logLevel = ($bQuiet) ? "DEBUG" : "INFO";
+    $Logger->Log("Applying Maximum Bait Per Organism Filter",$logLevel);
     my %BaitCountsPerOrg = GetBaitCountsPerOrg();
     my %nTrimPerOrg;
     my $sumCount = 0;
@@ -850,10 +739,13 @@ sub ApplyMaxBaitPerOrgFilter(;$){
         $nTrimPerOrg{$org} = $count - $maxBaitsPerOrg if($count > $maxBaitsPerOrg);
     }
     TrimBaitsFromOrganisms('Max',($bQuiet) ? $sumCount: undef,%nTrimPerOrg);
+    my $PreMaxBaits = $AbsMaxBaits;
+    $AbsMaxBaits = GetBaitCount('Max',(values %RegionOrder));
+    $Logger->Log("Filtered out @{[$PreMaxBaits - $AbsMaxBaits]} Baits",$logLevel);
 }
 
 sub TrimBaits($$){
-    print STDERR "[DEBUG] TrimBaits\n" if($bDebug);
+    $Logger->Log("TrimBaits","DEBUG");
     my ($densMode,$nBaitsToTrim) = (@_);
     my $TotalTrimmed = 0;
     my $bCycle = 0;
@@ -868,10 +760,10 @@ sub TrimBaits($$){
         for(my $i = 0; $i < @Orgs; $i++){
             my $modulus = 0;
             my $diff = 0;
-            if($i < $#Orgs and $BaitCountsPerOrg{$Orgs[$i+1]} > $minBaitsPerOrg){
+            if($i < $#Orgs and $BaitCountsPerOrg{$Orgs[$i+1]} > $MIN_BAITS_PER_ORG){
                 $diff = $BaitCountsPerOrg{$Orgs[$i]} - $BaitCountsPerOrg{$Orgs[$i + 1]};
             } else {
-                $diff = $BaitCountsPerOrg{$Orgs[$i]} - $minBaitsPerOrg;
+                $diff = $BaitCountsPerOrg{$Orgs[$i]} - $MIN_BAITS_PER_ORG;
             }
             $diff = 0 if($diff < 0);
             if($diff * ($i + 1) > $remaining){
@@ -879,11 +771,10 @@ sub TrimBaits($$){
                 $diff = int($remaining/($i+1));
             }
             for(my $j = 0; $j <= $i; $j++){
-                my $maxTrim = $BaitCountsPerOrg{$Orgs[$j]} - $minBaitsPerOrg;
+                my $maxTrim = $BaitCountsPerOrg{$Orgs[$j]} - $MIN_BAITS_PER_ORG;
                 $maxTrim = ($maxTrim > 0) ? $maxTrim : 0;
                 my $availableTrim = ($maxTrim > $nTrimPerOrg{$Orgs[$j]}) ? $maxTrim - $nTrimPerOrg{$Orgs[$j]} :0;
                 my $ToTrim = ($availableTrim > $diff + $modulus) ? ($diff + $modulus) : $availableTrim;
-                #print STDERR "[$i,$j] $availableTrim($nTrimPerOrg{$Orgs[$j]},$maxTrim)\t$diff($BaitCountsPerOrg{$Orgs[$i]} - $BaitCountsPerOrg{$Orgs[$i+1]})+$modulus\t$remaining\t=$ToTrim\n";
                 $modulus = ($diff + $modulus) - $ToTrim;
                 $nTrimPerOrg{$Orgs[$j]} += $ToTrim;
                 $remaining -= $ToTrim;
@@ -904,10 +795,9 @@ sub TrimBaits($$){
         $TotalTrimmed += $trimmed;
         $remaining = $nBaitsToTrim - $TotalTrimmed;
         $bCycle = 1 if($trimmed == 0);
-        #print STDERR "$Val{sum} ($Val{min} -> $Val{max})\t$remaining\t$TotalTrimmed\n";
     }
     if($TotalTrimmed < $nBaitsToTrim){
-        warn "[WARNING] Could not trim $nBaitsToTrim baits due to region sharing or size: Trimmed $TotalTrimmed baits\n";
+        $Logger->Log("Could not trim $nBaitsToTrim baits due to region sharing or size: Trimmed $TotalTrimmed baits","WARNING");
     }
 }
 
@@ -915,7 +805,7 @@ sub TrimBaitsFromOrganisms($$%){
     #Entire Regions may be trimmed away
     #As The first 3 sorting priorities are unaffected by region length, and ties past that point are
     #unlikely, Baits are successively removed from the lowest priority regions
-    print STDERR "[DEBUG] TrimBaitsFromOrganism\n" if($bDebug);
+    $Logger->Log("TrimBaitsFromOrganism","DEBUG");
     my $densMode = shift(@_);
     my $trimCap = shift(@_);
     my %nBaitsPerOrg = @_;
@@ -951,7 +841,6 @@ sub TrimBaitsFromOrganisms($$%){
             my $bDone = 0;
             my $Trimmed = ($availableToTrim < $remaining) ? $availableToTrim : $remaining;
             $Trimmed = $trimCap - $TotalTrimmed if($TotalTrimmed + $Trimmed > $trimCap);
-            #print STDERR "$regID: $Trimmed(av:$availableToTrim(dn:$density, rL: $regLen), rm:$remaining, tc: $trimCap)\n";
             if($Trimmed == $maxTrim){
                 RemoveRegion($regID);
             } else {
@@ -966,15 +855,16 @@ sub TrimBaitsFromOrganisms($$%){
             last if($TotalTrimmed == $trimCap)
         }
         if($nBaitsPerOrg{$org} && !$bTrimCap){
-            warn "[WARNING] Could not trim all $Record{$org} baits from $org due to excessive sharing:".
-                " Trimmed @{[$Record{$org} - $nBaitsPerOrg{$org}]}\n";
+            my $message = "Could not trim all $Record{$org} baits from $org due to excessive sharing:".
+                " Trimmed @{[$Record{$org} - $nBaitsPerOrg{$org}]}";
+                $Logger->Log($message,"WARNING");
         }
     }
     return $TotalTrimmed;
 }
 
 sub RemoveRegion($){
-    print STDERR "[DEBUG] RemoveRegion\n" if($bDebug);
+    $Logger->Log("RemoveRegion","DEBUG");
     my ($regID) = @_;
     #To Remove A Region, all references to in in the Region Order structure need to be removed,
     #As eveything is done in reference to this structure, it needn't be removed from the
@@ -987,7 +877,7 @@ sub RemoveRegion($){
 }
 
 sub TrimBaitsFromRegion($$$){
-    print STDERR "[DEBUG] TrimBaitsFromRegion\n" if($bDebug);
+    $Logger->Log("TrimBaitsFromRegion","DEBUG");
     my ($regID,$nBaits,$density) = @_;
     #Trimming a Region invloves reducing its nominal length,
     #   adjusting its start position so it remains centered,
@@ -1020,7 +910,7 @@ sub TrimBaitsFromRegion($$$){
 
 
 sub OptimizeMaxBaitsPerOrg(){
-    print STDERR "[DEBUG] OptimizeMaxBaitsPerOrg\n" if($bDebug);
+    $Logger->Log("Optimizing max baits per organism...","INFO");
     my $nMinClass = 2;
     my @MinOrgs;
     for(my $i = 0; $i < $nMinClass; $i++){
@@ -1051,12 +941,13 @@ sub OptimizeMaxBaitsPerOrg(){
         } elsif(!$maxBaitsPerOrg){
             $maxBaitsPerOrg = $maxBaits;
         }
-        PrintUpdate("Optimization Iteration @{[$i+1]}: Max @ $maxBaitsPerOrg",1) if($bDebug);
+        $Logger->Log("Optimization Iteration @{[$i+1]}: Max @ $maxBaitsPerOrg","DEBUG");
     }
+    $Logger->Log("Found optimum at $maxBaitsPerOrg baits per organism","INFO");
 }
 
 sub OptimizeMaxRegionsPerOrg(){
-    print STDERR "[DEBUG] OptimizeMaxRegionsPerOrg\n" if($bDebug);
+    $Logger->Log("Optimizing max regions per organism...","INFO");
     my $nMinClass = 3;
     my @MinOrgs;
     for(my $i = 0; $i < $nMinClass; $i++){
@@ -1080,22 +971,13 @@ sub OptimizeMaxRegionsPerOrg(){
             if($i == $nMinClass - 1){
                 $maxRegPerOrg = $MaxMid;
             } else {
-                #print STDERR $nMinClass,"_",scalar(@MinOrgs),"&",$i,"*",$MinOrgs[$i],"\n";
                 $maxRegPerOrg = scalar(@{$RegionOrder{$MinOrgs[$i]}});
             }
             ApplyMaxRegionFilter(%RegionOrder,1);
         } elsif(!$maxRegPerOrg){
             $maxRegPerOrg = $maxBaits;
         }
-        PrintUpdate("Optimization Iteration @{[$i+1]}: Max @ $maxRegPerOrg",1) if($bDebug);
+        $Logger->Log("Optimization Iteration @{[$i+1]}: Max @ $maxRegPerOrg","DEBUG");
     }
-}
-
-sub PrintUpdate($$){
-    my ($message,$bTime) = @_;
-    my $string = "[INFO] $message";
-    my $stepTime = time;
-    $string .= " (".($stepTime - $LastTime)."s)" if($bTime);
-    print STDERR $string,"\n";
-    $LastTime = $stepTime;
+    $Logger->Log("Found optimum at $maxRegPerOrg regions per organism","INFO");
 }

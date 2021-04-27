@@ -1,4 +1,4 @@
-package HUBDesign;
+package HUBDesign::Util;
 
 use strict;
 use warnings;

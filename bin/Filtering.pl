@@ -9,7 +9,7 @@ use File::Temp;
 use lib File::Spec->catdir(
             File::Basename::dirname(File::Spec->rel2abs($0)),
             '..','lib');
-use HUBDesign qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
 use HUBDesign::Logger;
 use HUBDesign::BaitRegion;
 
@@ -75,7 +75,7 @@ foreach (keys %DEFAULT){
 
 #Handle Verbosity
 $opts{v} = (exists $opts{v}) ? "INFO" : "WARNING";
-my $Logger = Logger->new(level => $opts{v});
+my $Logger = HUBDesign::Logger->new(level => $opts{v});
 
 #Handle Simple Numeric Options 
 $opts{e} = ProcessNumericOption($opts{e},$DEFAULT{e},undef,undef,0,"e-value");

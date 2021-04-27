@@ -1,4 +1,4 @@
-package BaitRegion;
+package HUBDesign::BaitRegion;
 use strict;
 use Class::Struct;
 use Carp;

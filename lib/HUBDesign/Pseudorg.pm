@@ -1,4 +1,4 @@
-package Pseudorg;
+package HUBDesign::Pseudorg;
 use strict;
 use Scalar::Util qw(looks_like_number);
 use Carp;

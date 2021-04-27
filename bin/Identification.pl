@@ -11,7 +11,7 @@ use Class::Struct;
 use lib File::Spec->catdir(
             File::Basename::dirname(File::Spec->rel2abs($0)),
             '..','lib');
-use HUBDesign qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
 use HUBDesign::Logger;
 use HUBDesign::BaitRegion;
 use HUBDesign::Pseudorg;
@@ -88,10 +88,9 @@ foreach (keys %DEFAULT){
     $opts{$_} = exists $opts{$_} ? $opts{$_} : $DEFAULT{$_};
 }
 
-
 #Init Logger Verbosity
 $opts{v} = (exists $opts{v}) ? "INFO" : "WARNING";
-my $Logger = Logger->new(level => $opts{v});
+my $Logger = HUBDesign::Logger->new(level => $opts{v});
 
 #Handle TmpDir
 unless (-d $opts{d}){
@@ -169,6 +168,8 @@ while( my ($type,$file) = each %FileDict){
 LogParameters();
 my %ClusterAssignment = ParseAssignments($FileDict{Assignment});
 my %PseudoGenomeDict = ConstructPseudoGenomes($FileDict{ClustSeq},\%ClusterAssignment);
+my @ids = $PseudoGenomeDict{'1920748'}->get_ids;
+my @poss = @{$PseudoGenomeDict{'1920748'}->{'Pseudorg::posList'}};
 $FileDict{PseudoGenome} = WritePseudoGenomes(\%PseudoGenomeDict);
 $FileDict{Oligos} = RunBOND($FileDict{PseudoGenome});
 my @BaitRegionList = CollapseBaits($FileDict{Oligos},\%PseudoGenomeDict);

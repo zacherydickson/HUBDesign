@@ -1,4 +1,4 @@
-package Logger;
+package HUBDesign::Logger;
 use strict;
 
 use Carp;
