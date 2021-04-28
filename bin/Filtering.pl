@@ -51,9 +51,9 @@ if(@ARGV < 1 or exists $opts{h}){
             "===Outputs\n".
             "A tab delimited files with columns of RegionID,TaxonID,ClusterID,Position, and Sequence\n".
             "===Options\n".
-            "-d dir\tiDirectory for temporary fasta files (Default: $DEFAULT{d})\n".
+            "-d dir  \tDirectory for temporary fasta files (Default: $DEFAULT{d})\n".
             "-e float\tThe maximum allowable e-value for hits (Default: $DEFAULT{e})\n".
-            "-f str\tParameters for the lcr filtering program, use 'no' to disable (Default: $DEFAULT{f})\n".
+            "-f str  \tParameters for the lcr filtering program, use 'no' to disable (Default: \'$DEFAULT{f}\')\n".
             "-i [0-100]\tThe maximum allowable percent identity for an hsp (Default: $DEFAULT{i})\n".
             "-l [1-∞)\tThe length of probe sequences (Default: $DEFAULT{l})\n".
             "-m [0-∞)\tThe maximum allowable hsp length (Default: $DEFAULT{m})\n".
@@ -89,7 +89,7 @@ $opts{t} = ValidateThreadCount($opts{t});
 my %FileDict= (BRInfo => shift @ARGV);
 my @BlastDBList = @ARGV;
 
-$Logger->Log("Bait Region File ($FileDict{BRInfo}) doe not exits","ERROR") unless(-e$FileDict{BRInfo});
+$Logger->Log("Bait Region File ($FileDict{BRInfo}) does not exits","ERROR") unless(-e$FileDict{BRInfo});
 
 #Prep parameters for logging
 my %params;
@@ -137,7 +137,7 @@ sub LoadBaitRegions($){
             next;
         }
         $TaxonSet{$taxon_id} = 1;
-        $BRDict{$br_id} = BaitRegion->new(taxon_id => $taxon_id, clust_id => $clust_id, pos => $pos, seq => $seq);
+        $BRDict{$br_id} = HUBDesign::BaitRegion->new(taxon_id => $taxon_id, clust_id => $clust_id, pos => $pos, seq => $seq);
     }
     my $message = sprintf("Loaded %d candidate bait regions for %d taxa",scalar(keys %BRDict),scalar(keys %TaxonSet));
     $Logger->Log($message,"INFO");

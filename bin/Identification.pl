@@ -254,7 +254,7 @@ sub ConstructPseudoGenomes($$){
         $clustCount++;
         my $taxon_id = $ClustAssignRef->{$clust_id};
         my $clustObj = CLUSTER->new(uid => $clust_id, seq => $seqObj->seq);
-        $PGDict{$taxon_id} = Pseudorg->new(id => $taxon_id) unless(exists $PGDict{$taxon_id});
+        $PGDict{$taxon_id} = HUBDesign::Pseudorg->new(id => $taxon_id) unless(exists $PGDict{$taxon_id});
         $PGDict{$taxon_id}->add($clustObj);
     }
     my $taxonCount = scalar(keys %PGDict);
@@ -326,7 +326,7 @@ sub CollapseBaits($$){
         my $taxon_id = (sort keys %{$PGDictRef})[$index];
         my ($clust_id,$clust_pos) = $PGDictRef->{$taxon_id}->map_pos($pos);
         $candidate_probe_count++;
-        my $brObj = BaitRegion->new(taxon_id => $taxon_id,clust_id => $clust_id,pos => $clust_pos, seq => $seq);
+        my $brObj = HUBDesign::BaitRegion->new(taxon_id => $taxon_id,clust_id => $clust_id,pos => $clust_pos, seq => $seq);
         #if(!defined $brObj->pos){
         #    print STDERR $brObj->toStr(),"\t*$posStr&$pos\n";
         #}

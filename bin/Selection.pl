@@ -20,8 +20,9 @@ use HUBDesign::Logger;
 #Declarations
 
 my $MIN_BAITS_PER_ORG = 30;
+my $_ID_PADDING = 6;
 
-my %DEFAULT = (b => 0, d => 1, l => 75, n => 0, r => 0);
+my %DEFAULT = (b => 0, d => 1, i => "BaitInfo.tsv", l => 75, n => 0, r => 0);
 
 #min = Minimum Possible Tiling Density
 #max = Maximum Possible Tiling Density
@@ -36,10 +37,11 @@ struct(TILING => {min => '$', max => '$', tgt => '$'});
 #Cls = The tiling class of this region, one of Min, Max, or Med, the last can be progressively tiled
 #Idx = The position within the region to begin tiling at
 #Len = The length of the tiling region of the bait region
+#tid = The actual id of the taxon target be this region
 #Ex. A 400bp Sequence which has been trimmed to 4 baits at 4x coverage would have: Len=170, Idx=115
 #Ex. A 150bp Sequence which has been trimmed to 37 baits at 35x coverage would have Len=149, Idx=0
 struct(REGION => {Org => '@', Tgt => '$', Seq => '$', Pos => '$',
-        TDn => 'TILING', Cls => '$', Idx => '$', Len => '$'});
+        TDn => 'TILING', Cls => '$', Idx => '$', Len => '$',tid => '$'});
 sub PrintREGION($$); #Usage RegObj->PrintREGION($file Handle);
 
 
@@ -72,10 +74,10 @@ sub OptimizeMaxRegionsPerOrg();
 #Handling Input
 
 my %opts;
-getopts('DOb:d:l:n:p:r:aPSvh',\%opts);
+getopts('DOb:d:i:l:n:p:r:aPSvh',\%opts);
 
-if(exists $opts{h} or @ARGV < 2){
-    my $Usage = "@{[basename($0)]} [-options] Tree RegionInfo > TiledBaits.fna";
+if(exists $opts{h} or @ARGV < 2 or !exists $opts{n}){
+    my $Usage = "@{[basename($0)]} [-options] -n maxBaits Tree RegionInfo > TiledBaits.fna";
     if(exists $opts{h}){
         die "===Description\n".
             "\tGiven a set of Bait Regions and some metadata, outputs a set of baits which\n".
@@ -88,11 +90,12 @@ if(exists $opts{h} or @ARGV < 2){
             "\tTree\tThe tree detailing the relationships between taxon ids\n".
             "\tRegionInfo\tA tab delimited file with 5 columns:\n".
             "\t\tRegion ID, Taxon ID, Cluster ID, Position within Cluster, and Sequence\n".
+           "\t-n INT[0,∞)\tThe maximum number of baits in the output[Default: $DEFAULT{n}]\n".
            "===Options\n".
            "\t-b INT[0,∞)\tThe maximum number of baits for any target organism [Default: $DEFAULT{b}]\n".
            "\t-d INT[1,l]\tThe minimum tiling density for any bait region [Default: $DEFAULT{d}x]\n". 
+           "\t-i PATH\tThe file to which the bait metadata will be saved (Default: $DEFAULT{i})\n".
            "\t-l INT[1,∞)\tThe length of baits to output [Default: $DEFAULT{l}bp]\n".
-           "\t-n INT[0,∞)\tThe maximum number of baits in the output[Default: $DEFAULT{n}]\n".
            "\t-p string\tA comma separated string or list file detailing the order of prescedence\n".
            "\t\tfor clusters. By default all are considered equal\n".
            "\t-r INT[0,∞)\tThe maximum number of regions for any target organism [Default: $DEFAULT{r}]\n".
@@ -107,8 +110,6 @@ if(exists $opts{h} or @ARGV < 2){
         die "Usage: $Usage\n\tUse -h for more info\n";
     }
 }
-my %FileDict;
-@FileDict{qw(Tree BRInfo)} = @ARGV[0 .. 1];
 
 foreach (keys %DEFAULT){
     $opts{$_} = exists $opts{$_} ? $opts{$_} : $DEFAULT{$_};
@@ -118,6 +119,16 @@ foreach (keys %DEFAULT){
 $opts{v} = (exists $opts{v}) ? "INFO" : "WARNING";
 $opts{v} = "DEBUG" if(exists $opts{D});
 my $Logger = HUBDesign::Logger->new(level => $opts{v});
+
+
+my %FileDict;
+@FileDict{qw(Tree BRInfo BaitInfo)} = (@ARGV[0 .. 1], $opts{i});
+#Check if given files exist
+while (my ($type,$file) = each %FileDict){
+    next if($type eq "BaitInfo"); 
+    $Logger->Log("$type file ($file}) doesn't exist","ERROR") unless(-e $file);
+}
+
 
 
 ## Process Simple Numeric Options
@@ -141,6 +152,7 @@ if(exists $opts{a}){
         $maxRegPerOrg = 0;
     }
 }
+#Handle Flags
 my $bRegSort = exists $opts{S} ? 0 : 1;
 my $bDebug = (exists $opts{D}) ? 1 : 0;
 my $OutMode = ('TaxaInfo','Baits')[exists $opts{O} ? 0 : 1];
@@ -153,6 +165,7 @@ my %params = (  maxBaitsPerOrg => ($maxBaitsPerOrg) ? $maxBaitsPerOrg : "∞",
                 TargetSeqOrder => (@TargetSeqOrder) ? join(",",@TargetSeqOrder) : "No Order",
                 TilingMode => (exists $opts{P}) ? 'Maximal' : 'Proportional',
                 RegionInfoFile => $FileDict{BRInfo},
+                BaitInfoFile => $FileDict{BaitInfo},
                 TreeFile => $FileDict{Tree});
 @params{qw(maxBaitsPerOrg maxRegPerOrg)} = ("Auto-Detect") x 2 if(exists $opts{a});
 $Logger->LogParameters(%params);
@@ -291,7 +304,7 @@ sub LoadRegionInfo($$){
         my @orgList = GetDescendentLeaves($taxon_id,$treeObj);
         @orgList = ($taxon_id) unless (@orgList);
         $BRInfo{$id} = REGION->new(Org => \@orgList,Tgt => $target,Pos=>$pos,Idx=>0,Seq=>$seq,
-            Len => length($seq),TDn => GetTilingDens(length($seq)));
+            Len => length($seq),TDn => GetTilingDens(length($seq)), tid => $taxon_id);
     }
     close($fh);
     $Logger->Log("Loaded @{[scalar(keys %BRInfo)]} bait regions","INFO");
@@ -412,7 +425,7 @@ sub CalculateNumBaits($$;$){
     $Logger->Log("CalculateNumBaits(@_) @ @{[ caller ]}","DEBUG");
     my ($regLen,$density,$regID) = @_;
     my $spacing = CalculateSpacing($regLen,$density);
-    if(!$spacing && $bDebug){
+    if(!$spacing){
         $Logger->Log("ID: $regID","DEBUG");
         PrintREGION($BaitRegionInfo{$regID},*STDERR);
     }
@@ -521,9 +534,12 @@ sub ApplyMaxRegionFilter(\%;$){
 sub OutputBaits(@){
     my $BaitCount = GetBaitCount('Tgt',(values %RegionOrder));
     $Logger->Log("Outputting $BaitCount Baits","INFO");
+    my $infofh = OpenFileHandle(">$FileDict{BaitInfo}","BaitInfo");
+    print $infofh "ProbeID\tTaxonID\tClustID\tClustPos\n";
     my %UniqRegID;
     @UniqRegID{@{$_}} = (1) x @{$_} foreach(@_);
     my $OUT = Bio::SeqIO->newFh(-format => "fasta");
+    my $nextid = 0;
     foreach my $regID (keys %UniqRegID){
         my $density = (defined $BaitRegionInfo{$regID}->TDn->tgt) ? $BaitRegionInfo{$regID}->TDn->tgt : $BaitRegionInfo{$regID}->TDn->max;
         my $regLen = $BaitRegionInfo{$regID}->Len;
@@ -532,12 +548,15 @@ sub OutputBaits(@){
         my $spare = $regLen - (($numBaits - 1) * $spacing + $baitLen);
         my $start = $BaitRegionInfo{$regID}->Idx + floor($spare / 2);
         for(my $i = 0; $i < $numBaits; $i++){
-            my $header = $regID."+".($start + $i * $spacing);
-            my $seq = substr($BaitRegionInfo{$regID}->Seq,$start + $i * $spacing,$baitLen);
-            my $seqObj = Bio::Seq->new(-id => $header, seq => $seq);
+            my $offset = $start + $i * $spacing;
+            my $probe_id = sprintf("Probe_%0*d",$_ID_PADDING,$nextid++);
+            my $seq = substr($BaitRegionInfo{$regID}->Seq,$offset,$baitLen);
+            my $seqObj = Bio::Seq->new(-id => $probe_id, seq => $seq);
             print $OUT $seqObj;
+            print $infofh join("\t",($probe_id,$BaitRegionInfo{$regID}->tid,$BaitRegionInfo{$regID}->Tgt,$BaitRegionInfo{$regID}->Pos + $offset)),"\n";
         }
     }
+    close($infofh);
 }
 
 
