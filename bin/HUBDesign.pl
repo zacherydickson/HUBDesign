@@ -1,0 +1,553 @@
+#
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Getopt::Long;
+use Class::Struct;
+use File::Basename;
+use File::Path qw(make_path remove_tree);
+use File::Spec;
+use File::Temp;
+use FindBin qw($Bin);
+use lib File::Spec->catdir(
+            File::Basename::dirname(File::Spec->rel2abs($0)),
+            '..','lib');
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
+use HUBDesign::Logger;
+
+#============================================================
+#Declarations
+
+struct (OPTINFO => {def => '$', msg => '$', type => '$', min => '$', max => '$',uniq => '$',cat => '$'});
+
+sub ConstructOptions();         #Usage: ConstructOptions();
+sub option_format($);           #Usage: my $str = option_format($optName);
+sub option_cat_help($);		#Usage: my $str = option_help($option_category);
+sub getParams();	        #Usage: my %params = option_params();
+sub PrintTrie($;$);	        #Usage: PrintTrie($root);
+sub uniqPrefix(@);              #Usage: my @prefixes = uniqPrefix(@strings);
+
+sub RunPhase($);	        #Usage: RunPhase($phase);
+sub GetPhaseCmd($);	        #Usage: my $cmd = GetPhaseCmd($phase);
+sub CheckForSkip($@);           #Usage: my $bSkip = CheckForSkip($phase,@fileTypes);
+
+my $GENOME_MULTIPLIER = 100;
+my @OPTION_ORDER;
+my %OPTION_INFO;
+ConstructOptions();
+my $OutDir = $OPTION_INFO{'output-dir'}->def;
+my $WorkingDir;
+my %opts;
+while (my ($optName,$obj) = each %OPTION_INFO){
+    $opts{$optName} = $obj->def if(defined $obj->def);
+}
+$opts{'output-dir'} = \$OutDir;
+my $blastDBListRef;
+$opts{'blast-db'} =  \$blastDBListRef;
+
+
+#============================================================
+#Handling Input
+
+GetOptions(\%opts,'help|?',map {option_format($_)} keys %OPTION_INFO) or die;
+
+if(@ARGV != 1 or exists $opts{help}){
+    my %prefixDict = uniqPrefix(keys %OPTION_INFO);
+    while( my ($opt,$prefix) = each %prefixDict){
+        $OPTION_INFO{$opt}->uniq($prefix);
+    }
+    my $Usage =  "Usage: ".basename($0). "[--options] [--guide-tree Tree.newick] Genomes.tab";
+    my $message;
+    if(exists $opts{help}){
+        $message = "===Description\n".
+            " Given a set of annotated genomes identifies and selects a set of probes which are specific\n".
+            "\tto hierarchical nodes within a dendrogram of the given genomes\n".
+            " Operates in phases:\n".
+            "\tClusters within genes of the same name generating representative sequences for each cluster\n".
+            "\tAssigns each cluster to a node in the hierarchy\n".
+            "\tIdentifies candidate regions which are unique to each node\n".
+            "\tFilters candidates for low complexity and against blacklist blast databases\n".
+            "\tSelects a set of probes\n".
+            " Can resume a previous run based on the files present in the output directory;\n".
+            "\tRequires the use of --keep on previous runs\n".
+            "===Usage\n $Usage\n".
+            "===Required Inputs\n".
+            " Genomes.tab\tA header-free tab delimited file with two columns: Relative-Path-to-GFF-file and TaxonID\n".
+            " Note: GFF files must be GFF3 formated, and include the fasta formated genomic sequences\n".
+            "\tat the end of the file (marked by ##FASTA)\n".
+            "\tPROKKA is a suggested annotation tool which produces such files\n".
+            " Note: GFF files may be gzipped, this must be indicated by a '.gz' extension\n".
+            "===Optional Inputs\n".
+            option_cat_help("important");
+        foreach my $category (qw(Clustering Assignment Identification Filtering Selection General)){
+            $message .= "===$category Options\n".option_cat_help($category);
+        }
+    } else {
+       $message = "Usage: $Usage\n\tUse --help|? for more info\n";
+    }
+    print STDERR $message;
+    exit 1;
+}
+
+#Initialize Logger
+my $Logger = HUBDesign::Logger->new(level => (exists $opts{verbose}) ? "INFO" : "WARNING");
+
+
+#Validate input files
+my %FileDict;
+$FileDict{GenomeInfo} = shift(@ARGV);
+$Logger->Log("Extra command line arguments ignored","WARNING") if(@ARGV);
+$FileDict{GuideTree} = $opts{'guide-tree'} if(defined $opts{'guide-tree'});
+
+while (my ($type,$file) = each %FileDict){
+    $Logger->Log("$type file ($file) does not exist","ERROR") unless (-e $file);
+}
+
+#Process numeric inputs
+while(my ($name,$obj) = each %OPTION_INFO){
+    next unless (defined $obj->type and $obj->type =~ /^[if]$/);
+    $opts{$name} = ProcessNumericOption($opts{$name},$obj->def,$obj->min,$obj->max,($obj->type eq 'i') ? 1 : 0,$name);
+}
+
+#Set probe count if not specified
+if(!defined $opts{'probe-count'}){
+    my $fh = OpenFileHandle($FileDict{GenomeInfo},"Genome Info");
+    1 while (<$fh>);
+    $opts{'probe-count'} = $GENOME_MULTIPLIER * $.;
+    close($fh);
+}
+
+#Ensure valid number of threads
+$opts{threads} = ValidateThreadCount($opts{threads});
+
+#Create output directories if necessary
+if($OutDir eq $OPTION_INFO{'output-dir'}->def){
+    $OutDir = File::Temp->newdir($OutDir,CLEANUP => 0);
+} else {
+    my $err;
+    if(-d $OutDir and exists($opts{force})){
+        remove_tree($OutDir,{safe => 1, keep_root => 1,error => \$err});
+         if($err and @$err){
+            foreach my $diag (@$err){
+                my ($file, $message) = %$diag;
+                $Logger->Log("Error when deleting $file: $message","WARNING");
+            }
+            $Logger->Log("Errors when cleaning out $OutDir","ERROR");
+        }
+    } else {
+        make_path($OutDir,{error => \$err});
+        $Logger->Log("Could not create directory $OutDir: $err->[0]->{$OutDir}","ERROR") if($err and @$err);
+    }
+}
+opendir(my $dir,$OutDir);
+($WorkingDir) = grep(/intermediate/,readdir($dir));
+closedir($dir);
+if($WorkingDir){
+    $WorkingDir = "$OutDir/$WorkingDir";
+} else{
+    $WorkingDir = "";
+}
+unless(-d $WorkingDir){
+    $WorkingDir = File::Temp->newdir("$OutDir/intermediate_XXXX",CLEANUP => (exists $opts{keep} ? 0 : 1));
+}
+
+#Check for conflicts in GC and Tm parameters
+if($opts{'gc-min'} > $opts{'gc-max'}){
+    $Logger->Log("Minimum GC cannot be greater than maximum GC: Swapping Limits","WARNING");
+    @opts{qw (gc-min gc-max)} = @opts{qw (gc-max gc-min)};
+}
+if(defined $opts{'tm-min'} or defined $opts{'tm-max'}){
+    if($opts{'tm-range'} != $OPTION_INFO{'tm-range'}->def){
+        $Logger->Log("Melting temperature range is ignored when any extrema are specified","WARNING");
+    }
+    if(defined $opts{'tm-min'} and defined $opts{'tm-max'}){
+        if($opts{'tm-min'} > $opts{'tm-max'}){
+            $Logger->Log("Min melting temperature cannot be greater than the max: Swapping limits","WARNING");
+            @opts{qw (tm-min tm-max)} = @opts{qw (tm-max tm-min)};
+        }
+    }
+}
+
+#Process and validate Blast DB input
+$blastDBListRef = [] unless defined($blastDBListRef);
+for( my $i =0; $i <@{$blastDBListRef};$i++){
+    my @dbList = split(/,/,$blastDBListRef->[$i]);
+    for(my $j = 0; $j < @dbList; $j++){
+        my $db = $dbList[$j];
+        unless( -e "$db.nhr"){
+            $Logger->Log("Could not find blastn database ($db): Ignoring","WARNING") ;
+            splice(@dbList,$j,1);
+            $j--;
+        }
+    }
+    splice(@{$blastDBListRef},$i,1,@dbList);
+    $i += $#dbList;
+}
+
+#Validate that all HUBDesign Scripts are locatable
+foreach my $phase (qw(Clustering Assignment Identification Filtering Selection)){
+    unless(-e "$Bin/$phase.pl"){
+       $Logger->Log("Could not find HUBDesign script for $phase phase","ERROR");
+    }
+}
+
+#Log the parameters
+$Logger->LogParameters(getParams());
+
+#Convert candidate pool to BOND's preferred format
+$opts{'candidate-pool'} = -1 if($opts{'candidate-pool'} == 0);
+
+#Convert GC and Tm to formats preferred by Identification
+$opts{'gc-interval'} = join(":",@opts{qw(gc-min gc-max)});
+if(defined $opts{'tm-min'} or defined $opts{'tm-max'}){
+    my $min = (defined $opts{'tm-min'}) ? $opts{'tm-min'} : "";
+    my $max = (defined $opts{'tm-max'}) ? $opts{'tm-max'} : "";
+    $opts{'tm-interval'} = join(":",($min,$max));
+}
+
+#Convet LCR filter options to  preferred format for Filtering
+$opts{'lcr-params'} = (exists $opts{'disable-lcr-filter'}) ? 'no' : "\'-w $opts{'lcr-window'} -t $opts{'lcr-threshold'}\'";
+
+
+
+#============================================================
+#Main
+
+foreach my $phase (qw(Clustering Assignment Identification Filtering Selection)){
+    RunPhase($phase);
+}
+
+#============================================================
+#Subroutines
+
+sub ConstructOptions(){
+   my @info =  (
+    'guide-tree' => OPTINFO->new(type => 's', cat => 'important', msg => "A path to a newick formatted tree to guide hierarchical assignments"),
+    'blast-db' => OPTINFO->new(type => "s@", cat => 'important', msg => "A path to blast database of blacklist sequences; multiple can be specified by using this option multiple times or by providing a comma separated list of paths; Databases are processed in the order provided",),
+    'probe-count' => OPTINFO->new(type => 'i', min => 1, cat => 'important', msg => "The maximum total size of the probeset to design (Default:${GENOME_MULTIPLIER}x#Genomes)"),
+    'length' => OPTINFO->new(def => 75, type => 'i', min => 1, cat => 'important', msg => "The length of probe sequences to generate"),
+    'r2t-divergence' => OPTINFO->new(def => 0.15, type => 'f', min => 0, max => 1, cat => 'Clustering', msg => "Max root-to-tip divergence within a cluster"),
+    'translation-table' => OPTINFO->new(def => 1, type => 'i', min => 1, max => 33, cat => 'Clustering',  msg => "The translation table to be used"),
+    #'clust-info-out' => OPTINFO->new(def => 'ClustInfo.tsv', type => 's', cat => 'Clustering', msg => "Name of a file containing information on the sequences contributing to each cluster"),
+    #'clust-seq-out' => OPTINFO->new(def => 'ClustSeq.fna', type => 's', cat => 'Clustering', msg => "Name of a file containing the representative sequences for each cluster"),
+    'weight-guide-tree' => OPTINFO->new(def => '1', type => 'f', min => 0, cat => 'Assignment', msg => "The relative weight of the topology generated from co-occurence of clusters compared to the user-provided guide tree"),
+    #'dendrogram-out' => OPTINFO->new(def => 'Guide.dend', type => 's', cat => 'Assignment', msg => "Name of a file containing a dendrogram defining the relationships between genomes"),
+    'penetrance' => OPTINFO->new(def => 50, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The minimum proportion of descendents of a node in which a cluster is present in order to include the cluster"),
+    'similarity-max' => OPTINFO->new(def => 75, type => 'f', min =>0, max => 100, cat => 'Identification', msg => "The maximum amount of overall identity between probes targeting different taxa"),
+    'match-max' => OPTINFO->new(def => 15, type => 'i', min => 1, cat => 'Identification', msg => "The maximum number of consecutive identities between probes targeting different taxa"),
+    'candidate-pool' => OPTINFO->new(def => 0, type => 'i', min => 0, cat => 'Identification', msg => "The maximum number of candidate probes for a taxon; 0 indicates no limit; Lowering the limit will reduce run-time but may reduce taxon coverage after filtering"),
+    'gc-min' => OPTINFO->new(def => 30, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The minimum gc content of candidate probes"),
+    'gc-max' => OPTINFO->new(def => 70, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The max gc content of candidate probes"),
+    'tm-min' => OPTINFO->new(type => 'f', cat => 'Identification', msg => "The minimum melting tempurature of candidate probes; Overrides --tm-range"),
+    'tm-max' => OPTINFO->new(type => 'f', cat => 'Identification', msg => "The maximum melting tempurature of candidate probes; Overrides --tm-range"),
+    'tm-range' => OPTINFO->new(def => 10, type => 'f', min => 0, cat => 'Identification', msg => "The width of the range of melting temperatures of candidate probes; Cannot be used with min and tm-max"),
+    'disable-lcr-filter' => OPTINFO->new(cat => 'Filtering', msg => ""),
+    'lcr-window' => OPTINFO->new(def => 64, type => 'i', min => 1, cat => 'Filtering', msg => "The window length for lcr filtering"),
+    'lcr-threshold' => OPTINFO->new(def => 20, type => 'f', cat => 'Filtering', msg => "The threshold for lcr filtering"),
+    'evalue' => OPTINFO->new(def => 10, type => 'f', cat => 'Filtering', msg => "Hits with higher evalues are ignored"),
+    'hsp-identity' => OPTINFO->new(def => 75, type => 'f', min => 0, max => 100, cat => 'Filtering', msg => "Hits with lower percent identity are ignored"),
+    'hsp-length' => OPTINFO->new(def => 20, type => 'i', min => 0, cat => 'Filtering', msg => "Shorter lengths are ignored"),
+    #    'extra-blast-options' => OPTINFO->new(type => 's', cat => 'Filtering', msg => "string of flags to pass to blast; cannont contain: task, db, query, evalue, outfmt, dust"),
+    'tiling-density' => OPTINFO->new(def => 10, type => 'i', min => 1, cat => 'Selection', msg => "The min desired coverage for a target locus"),
+    'disable-probe-balancing' => OPTINFO->new(cat => 'Selection', msg => "Prevents attempts to ensure all genomes are evenly targeted by the probeset, instead finding a constant tiling density which generates the desired number of probes"),
+    'threads' => OPTINFO->new(def => 0, type => 'i', min => 0, cat => 'General', msg => "The max numer of threads to use, 0 -> system max"),
+    'output-dir' => OPTINFO->new(def => 'HUBDesign_XXXX', type => 's', cat => 'General', msg => 'Directory for output files'),
+    'keep' => OPTINFO->new(cat => 'General',msg => "Keep all intermediary files"),
+    'force' => OPTINFO->new(cat => 'General',msg => "Prevents attempts to continue a prior run of the pipeline"),
+    'verbose' => OPTINFO->new(cat => 'General', msg => "Print detailed info to STDOUT"),
+    'help' => OPTINFO->new(cat => 'General',msg => "Display this message and exit")
+    );
+    @OPTION_ORDER = @info[map {$_ * 2} 0 .. int($#info / 2)];
+    %OPTION_INFO = @info;
+}
+
+sub option_format($){
+    my $format = shift;
+    my $obj = $OPTION_INFO{$format};
+    $format .= "|".$obj->uniq if(defined $obj->uniq);
+    $format .= "=".$obj->type if(defined $obj->type);
+    return $format;
+}
+
+sub option_cat_help($){
+    my $Category = shift;
+    my $str;
+    my ($formatwidth) = sort {$b <=> $a} (map {length(option_format($_))} (keys %OPTION_INFO));
+    $formatwidth += 9;
+    my $linewidth = 90;
+    foreach my $optName (@OPTION_ORDER){
+        next unless(exists $OPTION_INFO{$optName});
+        my $obj = $OPTION_INFO{$optName};
+        next unless($obj->cat eq $Category);
+        my $range = " ";
+        if(defined $obj->min or defined $obj->max){
+            if(defined $obj->min){
+                $range .= "[".$obj->min;
+            } else {
+                $range .= "(∞";
+            }
+            $range .= ":";
+            if(defined $obj->max){
+                $range .= $obj->max."]";
+            } else {
+                $range .= "∞)";
+            }
+        } else {
+            $range = "";
+        }
+        my $default = (defined $obj->def) ? " (Default:".$obj->def.")" : "";
+        my $msg = $obj->msg.$default;
+        my @words = split(/ /,$msg);
+        my $line = "";
+        my @msgLines;
+        while(@words){
+            $line  = join(" ",($line,shift(@words)));
+            if(length($line) + $formatwidth >= $linewidth and @words){
+                push(@msgLines,$line);
+                $line = "";
+            }
+        }
+        my $buffer = join("",(" ") x $formatwidth);
+        $msg = join("\n$buffer\t ",(@msgLines,$line));
+        $str .= sprintf(" --%-*s\t%s\n",$formatwidth,option_format($optName).$range,$msg);
+    }
+    return $str;
+}
+
+
+sub getParams(){
+    my %option_index;
+    @option_index{@OPTION_ORDER} = map {$_ * 2} (0 .. $#OPTION_ORDER);
+    my @params;
+    foreach my $opt (@OPTION_ORDER){
+        my $val = (exists $opts{$opt}) ? $opts{$opt} : undef;
+        if(!defined $OPTION_INFO{$opt}->type){
+            if($opt =~ s/^disable-//){
+                $val = (defined $val) ? "OFF" : "ON";
+            } else {
+                $val = (defined $val) ? "TRUE" : "FALSE";
+            }
+        } elsif($OPTION_INFO{$opt}->type eq "f"){
+        }
+        push (@params,($opt,$val));
+    }
+    my @Changes;
+    $params[$option_index{'guide-tree'}+1] = "None" unless(defined $params[$option_index{'guide-tree'}+1]);
+    if(@{$blastDBListRef}){
+        my $count = 0;
+        my @dbpairs;
+        foreach my $db (@{$blastDBListRef}){
+            push(@dbpairs,("blast-db ".++$count,$db));
+        }
+        push(@Changes,[$option_index{'blast-db'},2,\@dbpairs]);
+    } else{
+        $params[$option_index{'blast-db'}+1] = "None";
+    }
+    push(@Changes,[$option_index{'gc-min'},4,['gc-interval',"[$opts{'gc-min'}:$opts{'gc-max'}]"]]);
+    my ($tm_min, $tm_max) = (@params[map {$_ + 1} (@option_index{qw(tm-min tm-max)})]);
+    if(defined $tm_min or defined $tm_max){
+        my $bmin = defined $tm_min;
+        my $bmax = defined $tm_max;
+        my $left = ($bmin) ? "[" : "(";
+        my $right = ($bmax) ? "]" : ")";
+        $tm_min = ($bmin) ? sprintf("%0.2f",$tm_min) : "-∞";
+        $tm_max = ($bmax) ? sprintf("%0.2f",$tm_max) : "∞";
+        my $val = sprintf("%s%s:%s%s",$left,$tm_min,$tm_max,$right);
+        push(@Changes,[$option_index{'tm-min'},6,['tm-interval',$val]]);
+    } else {
+        push(@Changes,[$option_index{'tm-min'},4,[]]);
+    }
+    if($params[$option_index{'disable-lcr-filter'}+1] eq "OFF"){
+        push(@Changes,[$option_index{'lcr-window'},4,[]]);
+    }
+
+    $params[$option_index{'output-dir'}+1] = $OutDir;
+    push(@Changes,[$option_index{'verbose'},4,[]]);
+
+    my $offset = 0;
+    foreach my $change (@Changes){
+        #0 index within params
+        #1 number of elements to splice out
+        #2 array reference to replace with
+        splice(@params,$change->[0]+$offset,$change->[1],@{$change->[2]});
+        #offest tracks how far the right side of params has shifted relative to option_info
+        $offset += scalar(@{$change->[2]}) - $change->[1]
+    }
+
+    return ('genome-info', $FileDict{GenomeInfo}, @params);
+}
+
+
+sub PrintTrie($;$){
+    my $node = shift;
+    my $level = shift;
+    $level = 0 unless(defined $level);
+    print "$level) ".$node->char.":".$node->count."\n";
+    foreach my $child (values %{$node->children}){
+        PrintTrie($child,$level+1);
+    }
+}
+
+sub uniqPrefix(@){
+    struct (NODE => {char => '$', count => '$', children => '%'});
+
+    my $Trie_root = NODE->new(char => 'root', count => 0, children => {});
+
+    #Construct the trie
+    foreach my $str (@_){
+        my @chars = split("",$str);
+        my $node = $Trie_root;
+        $node->count($node->count + 1);
+        while(my $char = shift(@chars)){
+            if(exists $node->children->{$char}){
+                $node = $node->children->{$char};
+                $node->count($node->count +1);
+            } else {
+                $node->children->{$char} = NODE->new(char => $char, count => 1, children => {});
+                $node = $node->children->{$char};
+            }
+        }
+    }
+
+    #PrintTrie($Trie_root); 
+
+    #Find the unique prefix
+    my %prefixDict;
+    #Find the uniq prefix
+    foreach my $str (@_){
+        my $prefix = "";
+        my @chars = split("",$str);
+        my $node = $Trie_root;
+        for(my $i = 0; $i < @chars; $i++){
+            die "$str: Could not find $chars[$i] in the trie\n" unless(exists $node->children->{$chars[$i]});
+            $node = $node->children->{$chars[$i]};
+            $prefix .= $chars[$i];
+            last if ($node->count == 1);
+        }
+        $prefixDict{$str} = $prefix;
+    }
+    return %prefixDict;
+}
+
+sub RunPhase($){
+    my $phase = shift;
+    my @FileTypes = NamePhaseFiles($phase);
+    return if(CheckForSkip($phase,@FileTypes));
+    my $cmd = GetPhaseCmd($phase);
+    $Logger->Log("Running $phase...\n\t$cmd","INFO");
+    unless(system($cmd) == 0){
+        unless(exists $opts{keep} or $phase eq "Clustering" or ref($WorkingDir) ne "File::Temp"){
+            $WorkingDir->unlink_on_destroy(0);
+            $Logger->Log("Intermediate files saved for inspection","WARNING");
+        }
+        $Logger->Log("Error during $phase: $?","ERROR");
+    }
+}
+
+sub NamePhaseFiles($){
+    my $phase = shift;
+    my %NameDict;
+    if($phase eq 'Clustering') {
+        %NameDict = (ClustInfo => "$OutDir/ClustInfo.tsv", ClustSeq => "$OutDir/ClustSeq.fna");
+    } elsif($phase eq 'Assignment') {
+        %NameDict = (Assignment => "$WorkingDir/Assignment.tsv", GuideDend => "$OutDir/Guide.dend");
+    } elsif($phase eq 'Identification') {
+        %NameDict = (Candidates => "$WorkingDir/Candidates.tab");
+    } elsif($phase eq 'Filtering') {
+        %NameDict = (Filtered => "$WorkingDir/Filtered.tab");
+    } elsif($phase eq 'Selection') {
+        %NameDict = (Baits => "$OutDir/Probes.fna", BaitInfo => "$OutDir/ProbeInfo.tsv");
+    } else {
+        $Logger->Log("Attempt to run unknown phase ($phase) of the pipeline","ERROR");
+    }
+    while(my ($type,$file) = each %NameDict){
+        $FileDict{$type} = $file;
+    }
+    return keys %NameDict;
+}
+
+sub GetPhaseCmd($){
+    my $phase = shift;
+    my $cmd = "$Bin/$phase.pl";
+    my %options;
+    my %flags;
+    my @inputs;
+    my $outfile;
+    #Underscore character indicates that the values should be taken explicitly
+    #Otherwise the value is assumed to be a key in %opts
+    #An array reference value indicates that the first key in the list which exists in %opts will be used
+    if($phase eq 'Clustering') {
+        %options = (_l => $FileDict{GenomeInfo}, d => 'r2t-divergence', p => 'translation-table',
+            _o => $FileDict{ClustInfo}, _t => "\'--thread $opts{threads}\'");
+        %flags = (v => 'verbose');
+        $outfile = $FileDict{ClustSeq}
+    } elsif($phase eq 'Assignment') {
+        %options = (_g => $FileDict{GuideTree}, _G => $FileDict{GuideDend}, w => 'weight-guide-tree',
+            t => 'threads');
+        %flags = (v => 'verbose');
+        @inputs = ($FileDict{ClustInfo});
+        $outfile = $FileDict{Assignment}
+    } elsif($phase eq 'Identification') {
+        %options = (_d => $WorkingDir, g => 'gc-interval', i => 'hsp-identity', l => 'length',
+            m => ['tm-interval', 'tm-range'], n => 'candidate-pool', p => 'penetrance',
+            r => 'match-max', t => 'threads');
+        %flags = (k => 'keep', v => 'verbose');
+        @inputs = @FileDict{qw(Assignment ClustSeq)};
+        $outfile = $FileDict{Candidates}
+    } elsif($phase eq 'Filtering') {
+        %options = (_d => $WorkingDir, e => 'evalue', f => 'lcr-params', i => 'hsp-identity', l => 'length',
+            m => 'hsp-length', t => 'threads');
+        %flags = (k => 'keep', v => 'verbose');
+        @inputs= ($FileDict{Candidates},@{$blastDBListRef});
+        $outfile = $FileDict{Filtered};
+    } elsif($phase eq 'Selection') {
+        %options = (n => 'probe-count', d => 'tiling-density', _i => $FileDict{BaitInfo},
+            l => 'length');
+        %flags = (v => 'verbose', P => 'disable-probe-balancing');
+        unless(exists $opts{'disable-probe-balancing'}){
+            $flags{_a} = 1;
+        }
+        @inputs = @FileDict{qw(GuideDend Filtered)};
+        $outfile = $FileDict{Baits};
+    } else {
+        $Logger->Log("Attempt to run unknown phase ($phase) of the pipeline","ERROR")
+    }
+    my @optstr;
+    while(my ($opt,$name) = each %options){
+        if(ref($name) eq "ARRAY"){
+            my $i = 0;
+            $i++ until(exists $opts{$name->[$i]});
+            $name = $name->[$i];
+        }
+        my $value;
+        if($opt =~ s/^_//){
+            $value = $name;
+        } else {
+            $Logger->Log("$name is an unrecognized option for $phase","ERROR") unless(exists $opts{$name});
+            $value = $opts{$name};
+        }
+        push(@optstr,"-$opt $value");
+    }
+    my $flagstr;
+    while(my ($opt,$name) = each %flags){
+        $flagstr .= $opt if(exists $opts{$name});
+        $flagstr .= $opt if($opt =~ s/_//);
+    }
+    $flagstr = "-$flagstr" unless($flagstr eq "");
+    return join(" ",($cmd, @optstr, $flagstr, @inputs ,">", $outfile));
+}
+
+sub CheckForSkip($@){
+    my ($phase,@typeList) = @_;
+    my $bSkip = 1;
+    foreach my $type (@typeList){
+        if(exists $opts{force} or !-e $FileDict{$type} or -z $FileDict{$type}){
+            $bSkip = 0;
+            last;
+        }
+    }
+    if($bSkip){
+        $Logger->Log("Found output files from previous $phase run: Skipping $phase", "INFO");
+    }
+    return $bSkip;
+}

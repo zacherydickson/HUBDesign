@@ -75,8 +75,14 @@ sub Log(){
 }
 
 #Given a hash of parameters, outputs a summary
+#Summary is printed in the order in which arguments are provided
+#Allowing parameters to be provided as an array with keys in even elements and values in odd elements
 sub LogParameters(){
     my ($self,%params) = @_;
+    my @order;
+    for(my $i = 1; $i < @_; $i += 2){
+        push(@order,@_[$i]);
+    }
     return if($self->{'Logger::level'} < $_LOG_LEVEL{INFO});
     my $prevHandle = select($self->{'Logger::handle'});
     print join("",(('=') x 60)),"\n";
@@ -86,7 +92,7 @@ sub LogParameters(){
     foreach (keys %params){
         $nchar = length($_) if(length($_) > $nchar);
     }
-    foreach my $param (sort keys %params){
+    foreach my $param (@order){
         printf("%*s : %s\n",$nchar + 1,$param,$params{$param});
     }
     print join("",(('=') x 60)),"\n";

@@ -59,9 +59,9 @@ if(@ARGV < 2 or exists $opts{h}){
             "Assignment.tsv\tA tab separated values with headers of ClusterID, TaxonID, and Penetrance\n".
             "ClustSeq.fna\tA fasta formated file with headers which match ClusterIDs in Assignment.tsv\n".
             "===Outputs\n".
-            "A tab separated file with headers of RegionID, TaxonID, ClustID, Position, and Sequence\n".
+            "A tab delimited file with columns of RegionID, TaxonID, ClustID, Position, and Sequence\n".
             "===Options\n".
-            "-d dir\tiDirectory for temporary pseudo-genome files (Default $DEFAULT{d})\n".
+            "-d dir\tDirectory for temporary pseudo-genome files (Default $DEFAULT{d})\n".
             "-g str\tA string specifying the GC parameters (Default $DEFAULT{g})\n".
             "\t\tFormat min:max; min and max both between 0 and 100 and either may be optional \n".
             "-i [0-100]\tThe maximum percent identity for non-co-targeting probes (Default: $DEFAULT{i})\n".
@@ -168,8 +168,6 @@ while( my ($type,$file) = each %FileDict){
 LogParameters();
 my %ClusterAssignment = ParseAssignments($FileDict{Assignment});
 my %PseudoGenomeDict = ConstructPseudoGenomes($FileDict{ClustSeq},\%ClusterAssignment);
-my @ids = $PseudoGenomeDict{'1920748'}->get_ids;
-my @poss = @{$PseudoGenomeDict{'1920748'}->{'Pseudorg::posList'}};
 $FileDict{PseudoGenome} = WritePseudoGenomes(\%PseudoGenomeDict);
 $FileDict{Oligos} = RunBOND($FileDict{PseudoGenome});
 my @BaitRegionList = CollapseBaits($FileDict{Oligos},\%PseudoGenomeDict);

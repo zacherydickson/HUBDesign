@@ -52,7 +52,7 @@ if(@ARGV < 1 or exists $opts{h}){
             "-t INT\tNumber of Threads; 0 = sys_max [Default 1]\n".
             "===Flags\n".
             "-v\tVerbose Output\n".
-            "-h\tDisplay this message an exits\n";
+            "-h\tDisplay this message and exit\n";
     } else{
         die "Usage: $Usage\n\tUse -h for more info\n";
     }
