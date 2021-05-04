@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use Bio::SeqIO;
@@ -8,21 +8,16 @@ use Getopt::Std;
 use Class::Struct;
 use POSIX;
 use sort 'stable';
+use FindBin;
 use File::Basename;
-use lib File::Spec->catdir(
-            File::Basename::dirname(File::Spec->rel2abs($0)),
-            '..','lib');
-use HUBDesign::Util qw(ProcessNumericOption OpenFileHandle);
+use lib File::Spec->catdir($FindBin::RealBin,'..','lib');
+use HUBDesign::Util qw(ProcessNumericOption OpenFileHandle LoadConfig);
 use HUBDesign::Logger;
 
 
 #============================================================
 #Declarations
 
-my $MIN_BAITS_PER_ORG = 30;
-my $_ID_PADDING = 6;
-
-my %DEFAULT = (b => 0, d => 1, i => "BaitInfo.tsv", l => 75, n => 0, r => 0);
 
 #min = Minimum Possible Tiling Density
 #max = Maximum Possible Tiling Density
@@ -69,12 +64,19 @@ sub TrimBaitsFromOrganisms($$%);            #Usage $BaitsTrimmed = TrimBaitsFrom
 sub ApplyMaxBaitPerOrgFilter(;$);           
 sub OptimizeMaxBaitsPerOrg();               
 sub OptimizeMaxRegionsPerOrg();
+sub ParseConfig($);	                    #Usage ParseConfig($configFile);
+
+my $MIN_BAITS_PER_ORG = 30;
+my $_ID_PADDING = 6;
+my %DEFAULT = (b => 0, d => 1, i => "BaitInfo.tsv", l => 75, n => 0, r => 0);
+
 
 #============================================================
 #Handling Input
 
 my %opts;
-getopts('DOb:d:i:l:n:p:r:aPSvh',\%opts);
+getopts('DOb:d:i:l:n:p:r:C:aPSvh',\%opts);
+ParseConfig($opts{C});
 
 if(exists $opts{h} or @ARGV < 2 or !exists $opts{n}){
     my $Usage = "@{[basename($0)]} [-options] -n maxBaits Tree RegionInfo > TiledBaits.fna";
@@ -99,6 +101,7 @@ if(exists $opts{h} or @ARGV < 2 or !exists $opts{n}){
            "\t-p string\tA comma separated string or list file detailing the order of prescedence\n".
            "\t\tfor clusters. By default all are considered equal\n".
            "\t-r INT[0,∞)\tThe maximum number of regions for any target organism [Default: $DEFAULT{r}]\n".
+           "\t-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
            "\tNote: For b, n, and r a value of zero indicates no maximum\n".
            "===Flags\n".
            "\t-a\tAuto-detect max regions and baits per Organism to improve Proportional Tiling\n".
@@ -1000,3 +1003,18 @@ sub OptimizeMaxRegionsPerOrg(){
     }
     $Logger->Log("Found optimum at $maxRegPerOrg regions per organism","INFO");
 }
+
+sub ParseConfig($){
+    my $file = shift;
+    $file = "$FindBin::RealBin/../HUBDesign.cfg" unless defined $file;
+    unless(-e $file){
+        warn "Could not find Config file ($file): Revert to Hardcoded defaults\n";
+        return;
+    }
+    my %Config = LoadConfig($file,"WARNING");
+    my $_ID_PADDING = $Config{'ID-padding'} if(exists $Config{'ID-padding'}); 
+    my $MIN_BAITS_PER_ORG = $Config{'baits-per-org-min'} if(exists $Config{'baits-per-org-min'}); 
+    $DEFAULT{d} = $Config{'tiling-density'} if(exists $Config{'tiling-density'}); 
+    $DEFAULT{l} = $Config{'length'} if(exists $Config{'length'}); 
+}
+

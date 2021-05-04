@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use Bio::SeqIO;
@@ -6,24 +6,14 @@ use Getopt::Std;
 use File::Basename;
 use File::Spec;
 use File::Temp;
-use lib File::Spec->catdir(
-            File::Basename::dirname(File::Spec->rel2abs($0)),
-            '..','lib');
-use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
+use FindBin;
+use lib File::Spec->catdir($FindBin::RealBin, '..','lib');
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
 use HUBDesign::Logger;
 use HUBDesign::BaitRegion;
 
 #============================================================
 #Declarations
-
-my $_BLAST_EXECUTABLE = "blastn";
-my $_LCR_EXECUTABLE = "/home/zac/applications/sdust-master/sdust_";
-my $_ID_PADDING = 6;
-my $MIN_PERC = 0;
-my $MAX_PERC = 100;
-my $MIN_PROBE_LENGTH = 1;
-my %DEFAULT;
-@DEFAULT{qw(d e f i l m t x k)} = ('/tmp', 10 ,'-w 64 -t 20', 75, 75, 20, 0, 'none', 0);
 
 sub LoadBaitRegions($);		#my %BRDict = LoadBaitRegions($brfile)
 sub OutputFasta($$);		#my $tmpFile = OutputFasta(\$BRDict,$label);
@@ -31,12 +21,24 @@ sub RunLCRFilter($);		#my %ExIVDict = RunLCRFilter($fastafile);
 sub ExcludeIntervals($$);	#$ExcludeIntervals(\%BRDict,\%ExIVDict);
 sub RunBlastFilter($$);		#my %ExIVDict = RunBlastFilter($fastaFile,$blastdb);
 sub OutputResults($);		#OutputResults([values %BRDict]);
+sub ParseConfig($);	        #ParseConfig($configFile);
+
+my $_BLAST_EXECUTABLE = "blastn";
+my $_LCR_EXECUTABLE = "dustmasker -window {window} -level {threshold} -in {input} -outfmt acclist";
+my $_ID_PADDING = 6;
+my $MIN_PERC = 0;
+my $MAX_PERC = 100;
+my $MIN_PROBE_LENGTH = 1;
+my %DEFAULT;
+@DEFAULT{qw(d e f g i l m t x L k)} = ('/tmp', 10 , 64, 20, 75, 75, 20, 0, 'none', 0, 0);
+
 
 #============================================================
 #Handling Input
 
 my %opts;
-getopts('d:e:f:i:l:m:t:x:kvh',\%opts);
+getopts('d:e:f:g:i:l:m:t:x:C:Lkvh',\%opts);
+ParseConfig($opts{C});
 
 if(@ARGV < 1 or exists $opts{h}){
     my $Usage = basename($0)." [-options] Candidates.tab [BlastDB_1 ...] > FilteredCandidates.tab";
@@ -53,13 +55,16 @@ if(@ARGV < 1 or exists $opts{h}){
             "===Options\n".
             "-d dir  \tDirectory for temporary fasta files (Default: $DEFAULT{d})\n".
             "-e float\tThe maximum allowable e-value for hits (Default: $DEFAULT{e})\n".
-            "-f str  \tParameters for the lcr filtering program, use 'no' to disable (Default: \'$DEFAULT{f}\')\n".
+            "-f [1-∞)\tWindow length for lcr filtering (Default: $DEFAULT{f})\n".
+            "-g float\tThreshold lcr filtering (Default: $DEFAULT{g})\n".
             "-i [0-100]\tThe maximum allowable percent identity for an hsp (Default: $DEFAULT{i})\n".
             "-l [1-∞)\tThe length of probe sequences (Default: $DEFAULT{l})\n".
             "-m [0-∞)\tThe maximum allowable hsp length (Default: $DEFAULT{m})\n".
             "-t [0-∞)\tThe number of threads to use; 0 is system max (Default: $DEFAULT{t})\n".
             "-x str\tAdditional arguments to the blast cmd (Default: $DEFAULT{x})\n".
+            "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
+            "-L\tDisable LCR Filter\n".
             "-k\tKeep intermediary files\n".
             "-v\tVerbose Output\n".
             "-h\tDisplay this message and exit\n";
@@ -81,6 +86,11 @@ my $Logger = HUBDesign::Logger->new(level => $opts{v});
 $opts{e} = ProcessNumericOption($opts{e},$DEFAULT{e},undef,undef,0,"e-value");
 $opts{l} = ProcessNumericOption($opts{l},$DEFAULT{l},1,undef,1,"Probe Length");
 $opts{t} = ProcessNumericOption($opts{t},$DEFAULT{t},0,undef,0,"Max Threads");
+$opts{f} = ProcessNumericOption($opts{f},$DEFAULT{f},1,undef,1,"LCR Window");
+$opts{g} = ProcessNumericOption($opts{g},$DEFAULT{g},undef,undef,0,"LCR Threshold");
+$opts{i} = ProcessNumericOption($opts{i},$DEFAULT{i},$MIN_PERC,$MAX_PERC,0,"Percent Identity");
+$opts{m} = ProcessNumericOption($opts{m},$DEFAULT{m},0,undef,1,"HSP Length");
+
 
 #Ensure Threads is within system limits
 $opts{t} = ValidateThreadCount($opts{t});
@@ -93,8 +103,13 @@ $Logger->Log("Bait Region File ($FileDict{BRInfo}) does not exits","ERROR") unle
 
 #Prep parameters for logging
 my %params;
-@params{('Temp Directory', 'Probe Length', 'Threads', 'Input Data')} = (@opts{qw(d l t)}, $FileDict{BRInfo});
+@params{('Temp Directory', 'Probe Length', 'LCR Window', 'LCR Threshold', 'E-value', 'Percent Identity', 'HSP Length', 'Threads', 'Input Data')} = (@opts{qw(d l f g e i m t)}, $FileDict{BRInfo});
 $params{'Keep Temp Files'} = ($opts{k}) ? 'TRUE' : 'FALSE';
+$params{'LCR Filter'} = ($opts{L}) ? 'OFF' : 'ON';
+if($params{'LCR Filter'} eq "OFF"){
+    delete $params{'LCR Window'};
+    delete $params{'LCR Threshold'};
+}
 $params{'BlastDB Count'} = scalar(@BlastDBList);
 
 #============================================================
@@ -102,8 +117,8 @@ $params{'BlastDB Count'} = scalar(@BlastDBList);
 
     $Logger->LogParameters(%params);
     my %BaitRegionDict = LoadBaitRegions($FileDict{BRInfo});
-    $FileDict{Fasta_CBR} = OutputFasta(\%BaitRegionDict,"CBR");
-    unless($opts{f} eq 'no'){
+    unless($opts{L}){
+        $FileDict{Fasta_CBR} = OutputFasta(\%BaitRegionDict,"CBR");
         my %ExIVDict = RunLCRFilter($FileDict{Fasta_CBR});
         ExcludeIntervals(\%BaitRegionDict,\%ExIVDict);
     }
@@ -171,8 +186,11 @@ sub OutputFasta($$){
 #Output - A hash with keys of bait region id and values two-element array refs [start, end]
 sub RunLCRFilter($){
     my $file = shift;
-    $Logger->Log("Filtering candidate bait regions for low complexity sequences...","INFO");
-    my $cmd = "$_LCR_EXECUTABLE $opts{f} $file";
+    my $cmd = $_LCR_EXECUTABLE;
+    $cmd =~ s/\{window\}/$opts{f}/;
+    $cmd =~ s/\{threshold\}/$opts{g}/;
+    $cmd =~ s/\{input\}/$file/;
+    $Logger->Log("Filtering candidate bait regions for low complexity sequences with cmd:\n\t$cmd","INFO");
     my $fh = OpenFileHandle("$cmd |","LCR cmd","WARNING");
     unless($fh){
         $Logger->Log("LCR Filtration Skipped","INFO");
@@ -184,7 +202,8 @@ sub RunLCRFilter($){
     while(my $line = <$fh>){
         chomp($line);
         my ($br_id, $start, $end) = split(/\t/,$line);
-        #sdust is 0-indexed, desire 1-indexed
+        $br_id =~ s/^>//; #Handle leading > in dustmasker output
+        #sdust and dustmasker are 0-indexed, desire 1-indexed
         $start++;
         $end++;
         $ExIVDict{$br_id} = [] unless(exists $ExIVDict{$br_id});
@@ -281,4 +300,26 @@ sub OutputResults($){
         print  "$reg_id\t",$BRListRef->[$i]->toStr,"\n";
     }
     $Logger->Log("Done","INFO");
+}
+
+sub ParseConfig($){
+    my $file = shift;
+    $file = "$FindBin::RealBin/../HUBDesign.cfg" unless defined $file;
+    unless(-e $file){
+        warn "Could not find Config file ($file): Revert to Hardcoded defaults\n";
+        return;
+    }
+    my %Config = LoadConfig($file,"WARNING");
+    $_BLAST_EXECUTABLE = $Config{'BLAST-exec'} if(exists $Config{'BLAST-exec'});
+    $_ID_PADDING = $Config{'ID-padding'} if(exists $Config{'ID-padding'});
+    if(exists $Config{'lcr-exec'} and exists $Config{'lcr-cmd'}){
+        $_LCR_EXECUTABLE = "$Config{'lcr-exec'} $Config{'lcr-cmd'}";
+    }
+    $DEFAULT{e} = $Config{'evalue'} if(exists $Config{'evalue'}); 
+    $DEFAULT{f} = $Config{'lcr-window'} if(exists $Config{'lcr-window'}); 
+    $DEFAULT{g} = $Config{'lcr-threshold'} if(exists $Config{'lcr-threshold'}); 
+    $DEFAULT{i} = $Config{'hsp-identity'} if(exists $Config{'hsp-identity'}); 
+    $DEFAULT{l} = $Config{'length'} if(exists $Config{'length'}); 
+    $DEFAULT{m} = $Config{'hsp-length'} if(exists $Config{'hsp-length'}); 
+    $DEFAULT{t} = $Config{'threads'} if(exists $Config{'threads'}); 
 }

@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use File::Basename;
@@ -9,13 +9,15 @@ use Bio::Tree::DistanceFactory;
 use IO::String;
 use Class::Struct;
 use Parallel::ForkManager;
+use FindBin;
+use lib File::Spec->catdir($FindBin::RealBin, '..', 'lib');
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
 
 #============================================================
 #Declarations
 
 struct  (CLUSTER => {uid => '$', members => '@', assignment => '$', penetrance => '$'});
 
-my $_ID_PADDING = 5;
 
 sub LoadClusterInfo($);      #Usage: my @clusterList = LoadClusterInfo($clustFile);
 sub ConstructDendrogram($@); #Usage: my $treeObj = ConstructTaxonTree($guideTreeFile,@clusterList);
@@ -24,12 +26,17 @@ sub GetProcessorCount();     #Usage: my $sys_proc_count = GetProcessorCount();
 sub get_leaf_descendents($); #Usage: my @leafList = get_leaf_descendents($lcaNode);
 sub unique(@);               #Usage: my @unique = unique(@list)
 sub AssignTaxa($$);          #Usage: AssignTaxa($dendObj,\@clusterList);
+sub ParseConfig($); 	     #Usage: ParseConfig($ConfigFile);
+
+my $_ID_PADDING = 5;
+my %DEFAULT = (G => 'Guide.dend', w => 1, t => 1);
 
 #============================================================
 #Handling Input
 
 my %opts;
-getopts('g:G:w:t:vh',\%opts);
+getopts('g:G:w:t:C:vh',\%opts);
+ParseConfig($opts{C});
 
 if(@ARGV < 1 or exists $opts{h}){
     my $Usage =  "Usage: ".basename($0). " [-options] ClusterInfo > Assignment.tsv";
@@ -45,11 +52,12 @@ if(@ARGV < 1 or exists $opts{h}){
             "===Options\n".
             "-g PATH\tA file containing a newick formatted tree to guide taxon assignment\n".
             "\t\tNote: There is assumed to be no overlap between cluster ids and node ids in the tree\n".
-            "-G PATH\tThe file to which to write the dendrogram used to assign clusters to taxa (Default: Guide.dend)\n".
+            "-G PATH\tThe file to which to write the dendrogram used to assign clusters to taxa (Default: $DEFAULT{G})\n".
             "-w (0,∞]\tThe relative weight of the topology of the Clustering compared to the\n".
-            "\t\tGuide Tree (Default: 1.0)\n".
+            "\t\tGuide Tree (Default: $DEFAULT{w})\n".
 
-            "-t INT\tNumber of Threads; 0 = sys_max [Default 1]\n".
+            "-t INT\tNumber of Threads; 0 = sys_max (Default: $DEFAULT{t})\n".
+            "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
             "-v\tVerbose Output\n".
             "-h\tDisplay this message and exit\n";
@@ -58,28 +66,21 @@ if(@ARGV < 1 or exists $opts{h}){
     }
 }
 
+foreach my $opt (keys %DEFAULT){
+    $opts{$opt} = $DEFAULT{$opt} unless(exists $opts{$opt});
+}
+
+#Process Simple Numeric Options
+$opts{t} = ProcessNumericOption($opts{t},$DEFAULT{t},0,undef,1,"Max Threads");
+$opts{w} = ProcessNumericOption($opts{w},$DEFAULT{w},0,undef,0,"Guide Tree Weight");
+
 if(exists $opts{g}){
     die "Could not locate file: $opts{g}\n" unless(-e $opts{g});
 } else{
     $opts{g} = undef;
 }
 $opts{G} = (exists $opts{G}) ? $opts{G} : "Guide.dend";
-$opts{w} = (exists $opts{w}) ? $opts{w} : 1;
-my $max_proc = (exists $opts{t}) ? $opts{t} : 0;
-my $cpu_count = GetProcessorCount();
-if($cpu_count == -1){
-    warn "[WARNING] Could not determine sys_max threads: $!\n".
-    "\t Can't fully validate max_threads\n";
-    if($max_proc == 0){
-        warn "[WARNING] sys_max threads unknown: proceeding with 1 thread\n";
-        $max_proc = 1;
-    }
-} elsif($max_proc == 0 or $max_proc > $cpu_count){
-    if($max_proc > $cpu_count){
-        warn "[WARNING] Max threads is greater than sys_max: proceeding with $cpu_count threads\n";
-    }
-    $max_proc = $cpu_count;
-}
+my $max_proc = ValidateThreadCount($opts{t});
 
 #============================================================
 #Main Script
@@ -346,69 +347,15 @@ sub AssignTaxa($$){
     $pm->wait_all_children;
 }
 
-            #
-###Process Genes
-#my $counter = 0;
-#my %lcaDict;
-#my @geneList = keys(%TxIDSetDict);
-#my $geneCount = scalar(keys %TxIDSetDict);
-#my $blockSize = int($geneCount / $max_proc);
-#$blockSize = 1 if ($blockSize < 1);
-#my $targetUpdateTime = 10 * $max_proc;
-#GENE:
-#for (my $blockStart = 0; $blockStart < @geneList; $blockStart += $blockSize){
-#    $pm->start($blockStart) and next GENE;
-#    $blockEnd = ($blockEnd > $#geneList) ? $#geneList : $blockEnd;
-#    my @genesInBlock = @geneList[$blockStart .. $blockEnd];
-#    my @Output;
-#    my $lastUpdate = 0;
-#    my $count = 0;
-#    my $updateRate = 10; #Per thousand progress per update
-#    #To introduce an offset for each block to make reporting come consistently rather than in blocks
-#    my $initUpdateOffset = $targetUpdateTime - $updateRate * int($blockStart/$blockSize);
-#    my $lasttime = time;
-#    foreach my $gene (@genesInBlock){
-#        $count++;
-#        my @txidList = unique(@{$TxIDSetDict{$gene}});
-#        my $txidKey = join(';',@txidList);
-#        my $lcaID = $txidList[0];
-#        my $penetrance = 100;
-#        if(exists $lcaDict{$txidKey}){
-#            ($lcaID,$penetrance) = @{$lcaDict{$txidKey}};
-#        } else {
-#            my @nodeList;
-#            push(@nodeList,$treeObj->find_node(-id => $_)) foreach (@txidList); 
-#            my $leafCount = 1;
-#            if(@nodeList >= 2){
-#                my $lcaNode = $treeObj->get_lca(-nodes => \@nodeList);
-#                $lcaID = $lcaNode->id;
-#                my @leafList = get_leaf_descendents($lcaNode);
-#                $leafCount = scalar(@leafList);
-#                $penetrance = @nodeList/$leafCount*100
-#            }
-#            $lcaDict{$txidKey} = [$lcaID,$penetrance];
-#        }
-#        my $progress = int(($count / $blockSize) * 1000);
-#        if($bVerbose and $progress - $lastUpdate >= $updateRate){
-#            my $curtime = time;
-#            my $elapsed = $curtime - $lasttime;
-#            $elapsed = 1 if($elapsed < 1);
-#            if($elapsed != $targetUpdateTime){
-#                $updateRate = ($targetUpdateTime - $initUpdateOffset) * ($progress - $lastUpdate) / $elapsed;
-#                $updateRate = 1 if ($updateRate) < 1;
-#            }
-#            $lastUpdate = $progress;
-#            print STDERR "[INFO] The block beginning at $blockStart is @{[$lastUpdate/10]}% complete (@{[$curtime - $lasttime]}s)\n";
-#            $lasttime = $curtime;
-#            $initUpdateOffset = 0;
-#        }
-#        my $str = join("\t",($gene,$lcaID,sprintf("%0.2f",$penetrance)));
-#        push(@Output,$str);
-#    }
-#    $pm->finish(0,\@Output);
-#}
-#$pm->wait_all_children;
-#
-#
-#
-#
+sub ParseConfig($){
+    my $file = shift;
+    $file = "$FindBin::RealBin/../HUBDesign.cfg" unless defined $file;
+    unless(-e $file){
+        warn "Could not find Config file ($file): Revert to Hardcoded defaults\n";
+        return;
+    }
+    my %Config = LoadConfig($file,"WARNING");
+    $_ID_PADDING = $Config{'ID-padding'} if(exists $Config{'ID-padding'});
+    $DEFAULT{t} = $Config{'threads'} if(exists $Config{'threads'});
+    $DEFAULT{w} = $Config{'weight-guide-tree'} if(exists $Config{'weight-guide-tree'});
+}

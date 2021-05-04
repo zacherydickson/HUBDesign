@@ -1,5 +1,4 @@
-#
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use Getopt::Long;
@@ -8,11 +7,9 @@ use File::Basename;
 use File::Path qw(make_path remove_tree);
 use File::Spec;
 use File::Temp;
-use FindBin qw($Bin);
-use lib File::Spec->catdir(
-            File::Basename::dirname(File::Spec->rel2abs($0)),
-            '..','lib');
-use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
+use FindBin qw($RealBin);
+use lib File::Spec->catdir($RealBin,'..','lib');
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
 use HUBDesign::Logger;
 
 #============================================================
@@ -30,6 +27,12 @@ sub uniqPrefix(@);              #Usage: my @prefixes = uniqPrefix(@strings);
 sub RunPhase($);	        #Usage: RunPhase($phase);
 sub GetPhaseCmd($);	        #Usage: my $cmd = GetPhaseCmd($phase);
 sub CheckForSkip($@);           #Usage: my $bSkip = CheckForSkip($phase,@fileTypes);
+
+sub ParseConfig($);	        #Usage: ParseConfig($configFile);
+
+my $VERSION = "0.9.0";
+my $MAINTAINER = "ZacheryDickson";
+my $CITATION = "";
 
 my $GENOME_MULTIPLIER = 100;
 my @OPTION_ORDER;
@@ -50,8 +53,9 @@ $opts{'blast-db'} =  \$blastDBListRef;
 #Handling Input
 
 GetOptions(\%opts,'help|?',map {option_format($_)} keys %OPTION_INFO) or die;
+ParseConfig($opts{config});
 
-if(@ARGV != 1 or exists $opts{help}){
+if(@ARGV != 1 or exists $opts{help} or exists $opts{version}){
     my %prefixDict = uniqPrefix(keys %OPTION_INFO);
     while( my ($opt,$prefix) = each %prefixDict){
         $OPTION_INFO{$opt}->uniq($prefix);
@@ -82,6 +86,8 @@ if(@ARGV != 1 or exists $opts{help}){
         foreach my $category (qw(Clustering Assignment Identification Filtering Selection General)){
             $message .= "===$category Options\n".option_cat_help($category);
         }
+    } elsif(exists $opts{version}){
+        $message = "HUBDesign v$VERSION ($MAINTAINER)\n$CITATION\n"
     } else {
        $message = "Usage: $Usage\n\tUse --help|? for more info\n";
     }
@@ -186,7 +192,7 @@ for( my $i =0; $i <@{$blastDBListRef};$i++){
 
 #Validate that all HUBDesign Scripts are locatable
 foreach my $phase (qw(Clustering Assignment Identification Filtering Selection)){
-    unless(-e "$Bin/$phase.pl"){
+    unless(-e "$RealBin/$phase.pl"){
        $Logger->Log("Could not find HUBDesign script for $phase phase","ERROR");
     }
 }
@@ -204,10 +210,6 @@ if(defined $opts{'tm-min'} or defined $opts{'tm-max'}){
     my $max = (defined $opts{'tm-max'}) ? $opts{'tm-max'} : "";
     $opts{'tm-interval'} = join(":",($min,$max));
 }
-
-#Convet LCR filter options to  preferred format for Filtering
-$opts{'lcr-params'} = (exists $opts{'disable-lcr-filter'}) ? 'no' : "\'-w $opts{'lcr-window'} -t $opts{'lcr-threshold'}\'";
-
 
 
 #============================================================
@@ -233,8 +235,8 @@ sub ConstructOptions(){
     'weight-guide-tree' => OPTINFO->new(def => '1', type => 'f', min => 0, cat => 'Assignment', msg => "The relative weight of the topology generated from co-occurence of clusters compared to the user-provided guide tree"),
     #'dendrogram-out' => OPTINFO->new(def => 'Guide.dend', type => 's', cat => 'Assignment', msg => "Name of a file containing a dendrogram defining the relationships between genomes"),
     'penetrance' => OPTINFO->new(def => 50, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The minimum proportion of descendents of a node in which a cluster is present in order to include the cluster"),
-    'similarity-max' => OPTINFO->new(def => 75, type => 'f', min =>0, max => 100, cat => 'Identification', msg => "The maximum amount of overall identity between probes targeting different taxa"),
-    'match-max' => OPTINFO->new(def => 15, type => 'i', min => 1, cat => 'Identification', msg => "The maximum number of consecutive identities between probes targeting different taxa"),
+    'similarity' => OPTINFO->new(def => 75, type => 'f', min =>0, max => 100, cat => 'Identification', msg => "The maximum amount of overall identity between probes targeting different taxa"),
+    'contguity' => OPTINFO->new(def => 15, type => 'i', min => 1, cat => 'Identification', msg => "The maximum number of consecutive identities between probes targeting different taxa"),
     'candidate-pool' => OPTINFO->new(def => 0, type => 'i', min => 0, cat => 'Identification', msg => "The maximum number of candidate probes for a taxon; 0 indicates no limit; Lowering the limit will reduce run-time but may reduce taxon coverage after filtering"),
     'gc-min' => OPTINFO->new(def => 30, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The minimum gc content of candidate probes"),
     'gc-max' => OPTINFO->new(def => 70, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The max gc content of candidate probes"),
@@ -255,7 +257,9 @@ sub ConstructOptions(){
     'keep' => OPTINFO->new(cat => 'General',msg => "Keep all intermediary files"),
     'force' => OPTINFO->new(cat => 'General',msg => "Prevents attempts to continue a prior run of the pipeline"),
     'verbose' => OPTINFO->new(cat => 'General', msg => "Print detailed info to STDOUT"),
-    'help' => OPTINFO->new(cat => 'General',msg => "Display this message and exit")
+    'config' => OPTINFO->new(def => "$FindBin::Bin/../HUBDesign.cfg", type => 's', cat => "General", msg => "Path to a HUBDesign configuration file"),
+    'version' => OPTINFO->new(msg => ""),
+    'help' => OPTINFO->new(cat => 'General',msg => "Display this message and exit"),
     );
     @OPTION_ORDER = @info[map {$_ * 2} 0 .. int($#info / 2)];
     %OPTION_INFO = @info;
@@ -468,7 +472,7 @@ sub NamePhaseFiles($){
 
 sub GetPhaseCmd($){
     my $phase = shift;
-    my $cmd = "$Bin/$phase.pl";
+    my $cmd = "$RealBin/$phase.pl";
     my %options;
     my %flags;
     my @inputs;
@@ -478,7 +482,7 @@ sub GetPhaseCmd($){
     #An array reference value indicates that the first key in the list which exists in %opts will be used
     if($phase eq 'Clustering') {
         %options = (_l => $FileDict{GenomeInfo}, d => 'r2t-divergence', p => 'translation-table',
-            _o => $FileDict{ClustInfo}, _t => "\'--thread $opts{threads}\'");
+            _o => $FileDict{ClustInfo}, t => 'threads');
         %flags = (v => 'verbose');
         $outfile = $FileDict{ClustSeq}
     } elsif($phase eq 'Assignment') {
@@ -488,16 +492,16 @@ sub GetPhaseCmd($){
         @inputs = ($FileDict{ClustInfo});
         $outfile = $FileDict{Assignment}
     } elsif($phase eq 'Identification') {
-        %options = (_d => $WorkingDir, g => 'gc-interval', i => 'hsp-identity', l => 'length',
+        %options = (_d => $WorkingDir, g => 'gc-interval', i => 'similarity', l => 'length',
             m => ['tm-interval', 'tm-range'], n => 'candidate-pool', p => 'penetrance',
-            r => 'match-max', t => 'threads');
+            r => 'contiguity', t => 'threads');
         %flags = (k => 'keep', v => 'verbose');
         @inputs = @FileDict{qw(Assignment ClustSeq)};
         $outfile = $FileDict{Candidates}
     } elsif($phase eq 'Filtering') {
-        %options = (_d => $WorkingDir, e => 'evalue', f => 'lcr-params', i => 'hsp-identity', l => 'length',
-            m => 'hsp-length', t => 'threads');
-        %flags = (k => 'keep', v => 'verbose');
+        %options = (_d => $WorkingDir, e => 'evalue', f => 'lcr-window', g => 'lcr-threshold',
+            i => 'hsp-identity', l => 'length', m => 'hsp-length', t => 'threads');
+        %flags = (k => 'keep', v => 'verbose', L => 'disable-lcr-filter');
         @inputs= ($FileDict{Candidates},@{$blastDBListRef});
         $outfile = $FileDict{Filtered};
     } elsif($phase eq 'Selection') {
@@ -550,4 +554,25 @@ sub CheckForSkip($@){
         $Logger->Log("Found output files from previous $phase run: Skipping $phase", "INFO");
     }
     return $bSkip;
+}
+
+sub ParseConfig($){
+    my $file = shift;
+    $file = "$FindBin::Bin/../HUBDesign.cfg" unless defined $file;
+    unless(-e $file){
+        warn "Could not find Config file ($file): Revert to Hardcoded defaults\n";
+        return;
+    }
+    my %Config = LoadConfig($file,"WARNING");
+    while (my ($key,$value) = each %Config){
+        if(exists $OPTION_INFO{$key}){
+            $OPTION_INFO{$key}->def($value) unless($value eq 'None');
+        }
+    }
+    if(exists $Config{'genome-mult'}){
+        $GENOME_MULTIPLIER = $Config{'genome-mult'};
+        my $str = $OPTION_INFO{'probe-count'}->msg;
+        $str =~ s/(\d+)x/${GENOME_MULTIPLIER}x/;
+        $OPTION_INFO{'probe-count'}->msg($str);
+    }
 }

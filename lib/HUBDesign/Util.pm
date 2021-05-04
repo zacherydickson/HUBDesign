@@ -8,8 +8,8 @@ require Exporter;
 our $VERSION = 1.00;
 our @ISA = qw(Exporter);
 our @EXPORT = ();
-our @EXPORT_OK = qw(OpenFileHandle GetProcessorCount ProcessNumericOption ValidateThreadCount);
-our %EXPORT_TAGS = (All => [qw(&OpenFileHandle &GetProcessorCount &ProcessNumericOption &ValidateThreadCount)]);
+our @EXPORT_OK = qw(OpenFileHandle GetProcessorCount ProcessNumericOption ValidateThreadCount LoadConfig);
+our %EXPORT_TAGS = (All => [qw(&OpenFileHandle &GetProcessorCount &ProcessNumericOption &ValidateThreadCount &LoadConfig)]);
 
 #Given a file path, opens it for reading and fails with the provided exit function if unsuccessful
 # The default exit function is die
@@ -82,6 +82,29 @@ sub ProcessNumericOption($$$$$$){
     my ($sec,$minute,$hour) = localtime;
     printf STDERR "%02d:%02d:%02d - [%s] %s\n", ($hour,$minute,$sec,"ERROR",$message);
     exit 1;
+}
+
+sub LoadConfig($;$){
+    my $file = shift;
+    my $level = shift;
+    $level = "ERROR" unless(defined $level);
+    my $fh = OpenFileHandle($file,"Config",$level);
+    my %Config;
+    while(my $line = <$fh>){
+        next if($line =~ /^#/);
+        chomp($line);
+        next if($line eq "");
+        my($key,$value, @other) = split(/\t/,$line);
+        next unless(defined $key and defined $value and scalar(@other) == 0);
+        if(exists $Config{$key}){
+            my $message = "Duplicate config entry for $key on line $. ignored\n";
+            my ($sec,$minute,$hour) = localtime;
+            printf STDERR "%02d:%02d:%02d - [%s] %s\n", ($hour,$minute,$sec,"WARNING",$message);
+        }
+        $Config{$key} = $value;
+    }
+    close($fh);
+    return %Config;
 }
 
 1;

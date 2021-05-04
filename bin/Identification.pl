@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use Getopt::Std;
@@ -7,11 +7,10 @@ use Bio::SeqIO;
 use File::Basename;
 use File::Temp;
 use File::Spec;
+use FindBin;
 use Class::Struct;
-use lib File::Spec->catdir(
-            File::Basename::dirname(File::Spec->rel2abs($0)),
-            '..','lib');
-use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle);
+use lib File::Spec->catdir($FindBin::RealBin,'..','lib');
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
 use HUBDesign::Logger;
 use HUBDesign::BaitRegion;
 use HUBDesign::Pseudorg;
@@ -19,17 +18,6 @@ use HUBDesign::Pseudorg;
 
 #============================================================
 #Declarations
-
-my $_BOND_EXECUTABLE = "SA_BOND";
-my $_ID_PADDING = 6;
-my $MIN_PERC = 0;
-my $MAX_PERC = 100;
-my $MIN_PROBE_LENGTH = 1;
-my $MIN_TM_RANGE = 1;
-my %DEFAULT;
-@DEFAULT{qw(d g i l m n p r t k)} = ('/tmp', '30.0:70.0', 75 ,75, '10.0', -1,'50.0', 15, 0, 0);
-my %LOG_LEVEL = (ERROR => 0, WARNING => 1, INFO => 2, DEBUG => 3);
-
 
 struct (CLUSTER => {uid => '$', seq =>'$'});
 
@@ -41,15 +29,27 @@ sub WritePseudoGenomes($);	 #my $tempFile = WritePseudoGenomes(\%PGDict);
 sub RunBOND($);			 #my $tempFile = RunBOND($PGSeqFile);
 sub CollapseBaits($$);	         #my @BaitRegions = CollapseBaits($oligFile,\%PGDict);
 sub OutputResults($);		 #OutputResults(\@BRList);
+sub ParseConfig($); 	     #Usage: ParseConfig($ConfigFile);
+
+my $_BOND_EXECUTABLE = "SA_BOND";
+my $_ID_PADDING = 6;
+my $MIN_PERC = 0;
+my $MAX_PERC = 100;
+my $MIN_PROBE_LENGTH = 1;
+my $MIN_TM_RANGE = 1;
+my %DEFAULT;
+@DEFAULT{qw(d g i l m n p r t k)} = ('/tmp', '30.0:70.0', 75 ,75, '10.0', -1,'50.0', 15, 0, 0);
+
 
 #============================================================
 #Handling Input
 
 my %opts; #Global Hash with all options
-getopts('d:g:i:l:m:n:p:r:t:kvh',\%opts);
+getopts('d:g:i:l:m:n:p:r:t:C:kvh',\%opts);
+ParseConfig($opts{C});
 
 if(@ARGV < 2 or exists $opts{h}){
-    my $Usage = basename($0). " Assignment.tsv ClustSeq.fna > CandidateBaitRegions.tsv";
+    my $Usage = basename($0). " Assignment.tsv ClustSeq.fna > CandidateBaitRegions.tab";
     if(exists $opts{h}){
         print STDERR "\n===Description\n".
             "Given a set of representative sequences and information about their heirarchical assignments\n".
@@ -74,6 +74,7 @@ if(@ARGV < 2 or exists $opts{h}){
             "-p [0-100]\tThe minimum penetrance for inclusion (Default: $DEFAULT{p})\n".
             "-r [1-∞)\tThe maximum number of consectutive identities for non-co-targeting probes (Default: $DEFAULT{r})\n".
             "-t [0-∞)\tThe number of threads to use; 0 is system max (Default: $DEFAULT{t})\n".
+            "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
             "-k\tKeep intermediary files\n".
             "-v\tVerbose Output\n".
@@ -356,3 +357,28 @@ sub OutputResults($){
     }
     $Logger->Log("Done","INFO");
 }
+
+sub ParseConfig($){
+    my $file = shift;
+    $file = "$FindBin::RealBin/../HUBDesign.cfg" unless defined $file;
+    unless(-e $file){
+        warn "Could not find Config file ($file): Revert to Hardcoded defaults\n";
+        return;
+    }
+    my %Config = LoadConfig($file,"WARNING");
+    $_BOND_EXECUTABLE = $Config{'BOND-exec'} if(exists $Config{'BOND-exec'});
+    $_BOND_EXECUTABLE =~ s/\{bin\}/$FindBin::RealBin/;
+    $_ID_PADDING = $Config{'ID-padding'} if(exists $Config{'ID-padding'});
+    $DEFAULT{t} = $Config{'threads'} if(exists $Config{'threads'});
+    $DEFAULT{g} = join(":",((exists $Config{'gc-min'}) ? $Config{'gc-min'} : "", (exists $Config{'gc-max'}) ? $Config{'gc-max'} : ""));
+    $DEFAULT{m} = join(":",((exists $Config{'tm-min'}) ? $Config{'tm-min'} : "", (exists $Config{'tm-max'}) ? $Config{'tm-max'} : ""));
+    $DEFAULT{m} =~ s/None//g;
+    $DEFAULT{m} = $Config{'tm-range'} if($DEFAULT{m} eq ":" and exists $Config{'tm-range'});
+    $DEFAULT{i} = $Config{'similarity'} if(exists $Config{'similarity'});
+    $DEFAULT{l} = $Config{'length'} if(exists $Config{'length'});
+    $DEFAULT{n} = $Config{'candidate-pool'} if(exists $Config{'candidate-pool'});
+    $DEFAULT{n} = -1 if($DEFAULT{n} eq 0);
+    $DEFAULT{p} = $Config{'penetrance'} if(exists $Config{'penetrance'});
+    $DEFAULT{r} = $Config{'contiguity'} if(exists $Config{'match-max'});
+}
+

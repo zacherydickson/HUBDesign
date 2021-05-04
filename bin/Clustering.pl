@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use File::Basename;
@@ -11,17 +11,17 @@ use Bio::TreeIO;
 use Getopt::Std;
 use Class::Struct;
 use File::Temp;
+use FindBin;
+use File::Spec;
+use lib File::Spec->catdir($FindBin::RealBin, '..', 'lib');
+use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
+
 
 #============================================================
-#Declations
+#Declarations
 
 struct  (GENE => {tid => '$', chr => '$', uid => '$', start => '$', end => '$', strand => '$', seq => '$'});
 struct  (CLUSTER => {uid => '$', seq => '$', members => '@'});
-
-my $CLUST_ID_PADDING = 5;
-my $TEMP_DIR = "/tmp";
-my $ALIGNER = "mafft --auto --localpair --quiet";
-my $ALIGNER_FORMAT = "fasta";
 
 sub LoadGFFSet($@);         #Usage: my %GFFSet = LoadGFFSet($GFFListFile,@GFFFileList);
 sub LoadGeneInfo(%);        #Usage: my %GeneInfo = LoadGenes(%GFFSet);
@@ -32,12 +32,22 @@ sub ConstructTree($$);      #Usage: my $TreeObj = ConstructTree($alnObj,$geneNam
 sub ReRootTree($);          #Usage: ReRootTree($treeObj);
 sub ExtractClusters($$$$);  #Usage: my @clusterList = ExtractClusters(\@geneList,$alnObj,$treeObj,$geneName);
 sub PartitionTipLabels($$); #Usage: my @ClusteredLAbels = PartitionTipLAbels($nodeObj,$threshold)
+sub ParseConfig($);         #Usage: ParseConfig($ConfigFile);
+
+my $CLUST_ID_PADDING = 5;
+my $TEMP_DIR = "/tmp";
+my $ALIGNER_EXEC = "mafft";
+my $ALIGNER = "$ALIGNER_EXEC --auto --localpair --quiet --thread {thread} {input}";
+my $ALIGNER_FORMAT = "fasta";
+my %DEFAULT = (d => 0.15, e => '.gz,.gff', p => 1, o => 'ClustInfo.csv', t => 0);
 
 #============================================================
 #Handling Input
 
+
 my %opts;
-getopts('d:e:l:p:o:t:vVh',\%opts);
+getopts('d:e:l:p:o:t:C:vVh',\%opts);
+ParseConfig($opts{C});
 
 if(@ARGV < 1 or exists $opts{h}){
     my $Usage = basename($0)." [-options] [-l GFF.tsv] GFF1.gff[.gz] ... > ClustSeq.fna";
@@ -55,14 +65,15 @@ if(@ARGV < 1 or exists $opts{h}){
             "===Output\n".
             "\tA fasta formatted file with Cluster IDs has headers\n".
             "===Options\n".
-            "-d [0-1]\tThe Maximum root-tip divergence within clusters (Default: 0.15)\n".
-            "-e STR\tA comma separated list of file extensions [Default: '.gz,.gff']\n".
+            "-d [0-1]\tThe Maximum root-tip divergence within clusters (Default: $DEFAULT{d})\n".
+            "-e STR\tA comma separated list of file extensions [Default: $DEFAULT{e}]\n".
             "-l PATH\tA tab delimited file with a path to a gff file, and\n".
             "\t\tan optional taxonID on each line\n".
             "\t\tNote: If -l is specified, then no command line GFF's need to be specified\n".
-            "-p INT\tTranslation Table to use (Default: 1 [Standard])\n".
-            "-o PATH\t The file to which cluster info will be written (Default: ClustInfo.tsv)\n".
-            "-t STR\tA string acting as a flag for the external aligner for the number of threads [Default '']\n".
+            "-p INT\tTranslation Table to use (Default: $DEFAULT{p})\n".
+            "-o PATH\t The file to which cluster info will be written (Default: $DEFAULT{o})\n".
+            "-t STR\tA string acting as a flag for the external aligner for the number of threads (Default: $DEFAULT{t})\n".
+            "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
             "-v\tVerbose Output\n".
             "-h\tDisplay this message an exits\n";
@@ -71,20 +82,32 @@ if(@ARGV < 1 or exists $opts{h}){
     }
 }
 
+foreach my $opt (keys %DEFAULT){
+    $opts{$opt} = $DEFAULT{$opt} unless(exists $opts{$opt});
+}
+
+#Process Simple Numeric Options
+$opts{d} = ProcessNumericOption($opts{d},$DEFAULT{d},0,1,0,"r2t Divergence");
+$opts{p} = ProcessNumericOption($opts{p},$DEFAULT{p},1,33,1,"Translation Table");
+$opts{t} = ProcessNumericOption($opts{t},$DEFAULT{t},0,undef,1,"Max Threads");
 
 $opts{d} = (exists $opts{d}) ? $opts{d} : 0.15;
 if($opts{d} < 0 or $opts{d} > 1){
     die "Clustering threshold must be a floating value between 0 and 1 inclusive\n";
 }
-$opts{e} = exists $opts{e} ? [split(",",$opts{e})] : [".gz",".gff"];
+$opts{e} = [split(",",$opts{e})];
+
 if(exists $opts{l}){
     die "Could not locate file: $opts{l}\n" unless(-e $opts{l});
 } else{
     $opts{l} = undef;
 }
-$opts{p} = exists $opts{p} ? $opts{p} : 1;
-$opts{o} = exists $opts{o} ? $opts{o} : "ClustInfo.tsv";
-$opts{t} = exists $opts{t} ? $opts{t} : "";
+
+#Handle Num Threads
+$opts{t} = ValidateThreadCount($opts{t});
+$ALIGNER =~ s/\{thread\}/$opts{t}/;
+
+#Handle Verbosity
 $opts{v} = 1 if (exists $opts{V});
 
 
@@ -265,7 +288,10 @@ sub AlignByProt($$){
     }
     ## Call the external aligner, and get its output
     print STDERR "\t\tAligning translated sequences...\n" if(exists $opts{V});
-    open( my $fh, "-|", "$ALIGNER $opts{t} ".$tmpFile->filename) or warn "Alignment Error for $geneName: $!";
+    my $cmd = $ALIGNER;
+    my $filename = $tmpFile->filename;
+    $cmd =~ s/\{input\}/$filename/;
+    open( my $fh, "-|", "$cmd") or warn "Alignment Error for $geneName: $!";
     my $AlnI = Bio::AlignIO->new(-fh => $fh, -format => $ALIGNER_FORMAT);
     my $alnObj = $AlnI->next_aln();
     ## Detranslate the protein sequences
@@ -376,3 +402,23 @@ sub PartitionTipLabels($$){
     }
     return  map {PartitionTipLabels($_,$thresh)} $node->each_Descendent;
 }
+
+
+sub ParseConfig($){
+    my $file = shift;
+    $file = "$FindBin::RealBin/../HUBDesign.cfg" unless defined $file;
+    unless(-e $file){
+        warn "Could not find Config file ($file): Revert to Hardcoded defaults\n";
+        return;
+    }
+    my %Config = LoadConfig($file,"WARNING");
+    $CLUST_ID_PADDING = $Config{'ID-padding'} if(exists $Config{'ID-padding'});
+    $TEMP_DIR = $Config{'cluster-dir'} if(exists $Config{'cluster-dir'});
+    $ALIGNER_EXEC = $Config{'Aligner-exec'} if(exists $Config{'Aligner-exec'});
+    $ALIGNER = "$ALIGNER_EXEC $Config{'Aligner-cmd'}" if(exists $Config{'Aligner-cmd'});
+    $ALIGNER_FORMAT = $Config{'Aligner-format'} if(exists $Config{'Aligner-format'});
+    $DEFAULT{d} = $Config{'r2t-divergence'} if(exists $Config{'r2t-divergence'});
+    $DEFAULT{p} = $Config{'translation-table'} if(exists $Config{'translation-table'});
+    $DEFAULT{t} = $Config{'threads'} if(exists $Config{'threads'});
+}
+
