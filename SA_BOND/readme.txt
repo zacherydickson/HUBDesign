@@ -3,7 +3,7 @@
 How to run SA_BOND (our program for designing oligonucleotides)
 ============================================================
 
-	./SA_BOND <inputSequences> <outputOligos> [-length]
+	./SA_BOND_<platform> <inputSequences> <outputOligos> [-length]
 [-seqSim] [-maxMatch] [-maxGC] [-minGC] [-dimerLen] [-dimerSim] [-hairpinLen]
 [-minhpLoop] [-maxhpLoop] [-rangeTm] [-minTm] [-maxTm] [-oligCon] [-saltCon]
 [-secStr] [-outMode] [-simCheck] [-paddingLen]
@@ -49,21 +49,12 @@ is the same as -length)
 made up of up to "-length" - "-tilingLen" + 1 unique "-tilingLen" oligos
 [-maxThread]: The maximum number of threads to use (Default value is system max)
 
-
 Example
 =======
 
-For the input dataset "ecoli.fsa" the commands for running BOND with default parameters on linux, mac, and windows are:
+For the input dataset "ecoli.fsa" the commands for running BOND with default parameters on linux
 
-1. For Linux:
-	./BOND_linux ecoli.fsa ecoli.bond
-
-2. For Mac:
-	./BOND_mac ecoli.fsa ecoli.bond
-
-3. For Windows (64-bit):
-	BOND_windows ecoli.fsa ecoli.bond
-
+	./SA_BOND ecoli.fsa ecoli.bond
 
 If the user would like to design oligos with these parameters:
 
@@ -72,62 +63,17 @@ If the user would like to design oligos with these parameters:
 - maximum consecutive match: 16
 - enabling secondary structure checking
 
-then the linux command is:
+	./SA_BOND ecoli.fsa ecoli.bond -length 60 -seqSim 80 -maxMatch 16 -secStr 
 
-	./BOND_linux ecoli.fsa ecoli.bond -length 60 -seqSim 80 -maxMatch 16 -secStr 
+NOTE
+====
 
-
-
-=============================================================================================================
-How to run EVAL (the program for evaluating the specificity); PRE_EVAL prepares the oligo file for evaluation
-=============================================================================================================
-
-	./PRE_EVAL_<platform> <BONDOligos> <plainOligos>
-	./EVAL_<platform> <inputSequences> <plainOligos> <outputReport>
-
-Required parameters:
-
-<BONDOligos> - the file containing the oligos designed by BOND
-<plainOligos> - a file containing only the oligos, one per line, and no additional information
-<inputSequencess> - the input file containing the gene sequences in FASTA format
-<outputReport> - the output file containing the evaluation report (bad oligos, good oligos, and statistics)
-
-
-Example
-=======
-
-To evaluate the oligos designed by BOND "ecoli.bond" for the dataset "ecoli.fsa" the linux commands are:
-
-        ./PRE_EVAL_linux ecoli.bond ecoli.plain
-        ./EVAL_linux ecoli.fsa ecoli.plain ecoli.report
-
-
-
-=====================================================================================================
-How to run MAX (the program for estimating the maximum number of oligos, needed to evaluate coverage)
-=====================================================================================================
-
-	./MAX_<platform> <inputSequences> <outputReport> 
-
-Required parameters:
-
-<inputSequencess> - the input file containing the gene sequences in FASTA format
-<outputReport> - the output file containing the estimated maximum number of oligos
-
-
-Example
-=======
-
-To estimate the maximum number of oligos for the dataset "ecoli.fsa" the linux command is:
-
-        ./MAX_linux ecoli.fsa ecoli.max
-
-
-
+Peak Memory usage is approximately 70.5 Bytes per base pair of input, you can
+use this to determine if you system can handle running BOND on your dataset.
 
 =================================================
 For any questions, please contact 
-Lucian Ilie 
-e-mail: ilie@csd.uwo.ca
+Zachery Dickson
+e-mail: dicksoz@mcmaster.ca
 =================================================
 

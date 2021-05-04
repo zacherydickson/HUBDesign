@@ -9,6 +9,7 @@
 #include <omp.h>
 #include <bitset>
 
+
 int OLIG_LENGTH = 50;
 int seqSimilarity = 75;
 int maxseqIdentity;
@@ -24,8 +25,6 @@ int GC_CONT_MIN = 30;
 int dimerLen = 15, dimerStg = 86;
 int hpStem = 6, hpminLoop = 1, hpmaxLoop = 3;
 int maxOligs = 1;
-int outputMode = 0; //Print Oligos
-bool useFastHomology = false; //Option to run the fast homology phase
 int paddingLen = 0;
 int tilingLen = OLIG_LENGTH;
 int nTiles;
@@ -70,13 +69,39 @@ const char * seed_Phase2 [] = { //S8W9
     "1110010000001000010000010011"
 };
 
+//const char * seed_Black [] { //
+//    "11111111111",
+//    "111111111111111"
+//};
+
 using namespace std;
+
+struct OLIGO {
+    float Tm;
+    int gene;
+    int length;
+    int uDist;
+    int dDist;
+    int uPad;
+    int dPad;
+    unsigned char* sequence;
+};
 
 struct entry {
 	uint64_t key;
 	long *pos;
 	int size;
 };
+
+unsigned char* substr(unsigned char* dest, unsigned char* src, long srclen, size_t offset, size_t length){
+    if(debugLevel > 1) {fprintf(stderr,"Call to substr for %d chars at %d of %ld: %p -> %p\n", length, offset, srclen,src, dest);}
+    if(offset < 0 || offset >= srclen){
+        return NULL;
+    }
+    memcpy(dest,&src[offset], length * sizeof(unsigned char));
+    dest[length] = '\0';
+    return dest;
+}
 
 void print_Count(uint8_t *simarray, long* geneLoc){
     if(debugLevel > 0) {fprintf(stderr,"Call to print_Count\n");}
@@ -237,26 +262,26 @@ void reverseBlocks(int shiftno, int nblocks, uint64_t* fBlocks, uint64_t* rBlock
     }
 }
 
-void create_Hash(entry *hashTable, uint8_t *gCoded, uint64_t seed, int seedlen){
+void create_Hash(entry* &hashTable, uint8_t *gCoded, uint64_t seed, int seedlen,long nbytes, unsigned long HashSize){
         if(debugLevel > 1) {fprintf(stderr,"Call to create_Hash\n");}
 	//Begin Hashing
 	uint64_t window =0, hashKey=0;
 	long location = -1;
-        int* lindex = (int*) malloc(PRIME_IH*sizeof(int));
-	for (long i=0; i < PRIME_IH; ++i) {
+        int seedBytes = (seedlen % 4) ? seedlen / 4 + 1: seedlen / 4;
+        int* lindex = (int*) malloc(HashSize*sizeof(int));
+	for (long i=0; i < HashSize; ++i) {
 	    hashTable[i].key = 0;
 	    hashTable[i].pos = NULL;
 	    hashTable[i].size = 0;
             lindex[i] = 0;
 	}
+
         for (int step = 0; step < 2; ++step){
 	    window = get64bit(nbytes-1, gCoded);
-	    for (long byte = nbytes-1; byte >= 0/*OLIG_LENGTH/4 - 9*/; --byte) {
-                //printf("%ld) %ld\n", i, seed);
-                //printf("\n");
-	        for (int pass=3; pass >=0 && byte*4 + pass >= seedlen - 2; --pass){
+	    for (long byte = nbytes-1; byte >= seedBytes - 1; --byte) {
+	        for (int pass=3; pass >=0 && byte*4 + pass +1 >= seedlen; --pass){
 	        	hashKey = (uint64_t) (window & seed);
-                        long j = locate_hashSlot(hashKey,hashTable,PRIME_IH,step==0);
+                        long j = locate_hashSlot(hashKey,hashTable,HashSize,step==0);
                         if(j == -1){
                             printf("Hash cycled in create_Hash\n");
                             exit(EXIT_FAILURE);
@@ -270,12 +295,12 @@ void create_Hash(entry *hashTable, uint8_t *gCoded, uint64_t seed, int seedlen){
 	        	    location = byte*4 + pass; 
                             hashTable[j].pos[lindex[j]++] = location;
                         }
-	        	window >>=  2;// only works for seeds that are 24 chars or less 
+	        	window >>=  2;
 	        }
-                window |= (((uint64_t) gCoded[byte-8]) << (BLOCK-8));
+                if(byte >= 8) window |= (((uint64_t) gCoded[byte-8]) << (BLOCK-8));
 	    }
             if(step == 0){ //Allocate Space
-                for(long i = 0; i < PRIME_IH; ++i) {
+                for(long i = 0; i < HashSize; ++i) {
                     if(hashTable[i].size > 0){
                         hashTable[i].pos = (long*) malloc(hashTable[i].size*sizeof(long));
                     }
@@ -340,7 +365,7 @@ int excessIdentity_Count(uint8_t *gCoded, long pose, long posc,bool reve=false, 
     bool reverse[2] = {reve,revc};
     int kane75;
 
-    for(int i = 0; i < 2; i++){//0 = e (query) 1 = c (subject)
+    for(int i = 0; i < 2; i++){
         hit[i] = (uint64_t*) malloc(nBlocks * sizeof(uint64_t));
         int shift = getBlocks(gCoded,pos[i],hit[i]);
         if(reverse[i]){
@@ -476,16 +501,22 @@ bool second_Check(uint64_t seed, int seedLen, entry* hashTable, uint8_t* gCoded,
                        if(checkSubOligos(gCoded,pose,match_pos,simarray,(strand==1))){
                             ++w;
                         } else{
+                            free(ehit);
+                            free(rhit);
                             return false;
                         }
                     } else { //No suboligos are valid
                         w = hashTable[slot[strand]].size;
                         for(long i = off; i >= 0; --i){
+                            //printf("mp: %ld, i: %ld, off: %ld, pose: %ld\n",match_pos, i, off, pose);
                             if(match_pos - i > OLIG_LENGTH -1) simarray[match_pos - i] = 1;
                             if(match_pos + i < gSize) simarray[match_pos + i] = 1;
                             if(pose - i > OLIG_LENGTH - 1) simarray[pose - i] = 1;
-                            if(pose + i < gSize) simarray[match_pos + i] = 1;
+                            if(pose + i < gSize) simarray[pose + i] = 1;
                         }
+
+                        free(ehit);
+                        free(rhit);
             	        return  false;
                     }
             	}
@@ -504,6 +535,115 @@ bool second_Check(uint64_t seed, int seedLen, entry* hashTable, uint8_t* gCoded,
         }
         ++offpos;
     }
+    free(ehit);
+    free(rhit);
+    return true;
+}
+
+uint64_t* encodeOLIGO(uint64_t* Coded,OLIGO x){
+    int nblocks = x.length/(BLOCK / 2);
+    if(x.length % (BLOCK / 2)) nblocks++;
+    if(!Coded) return 0;
+    for(int block = nblocks -1; block >= 0; --block){
+        uint64_t temp = 0;
+        int stpoint = (block == 0) ? x.uPad : x.uPad + (BLOCK / 2) * (block - nblocks) + x.length;
+        int edpoint = x.uPad + (BLOCK / 2) * (1+ block - nblocks) + x.length - 1;
+        //printf("s: %d\te: %d\n",stpoint,edpoint);
+        for(int i = stpoint; i <= edpoint; i++) {
+            switch (x.sequence[i]) {
+                case 'A':
+                    temp = (uint64_t) (temp << 2 | 0);
+                    break;
+                case 'C':
+                    temp = (uint64_t) (temp << 2 | 1);
+                    break;
+                case 'G':
+                    temp = (uint64_t) (temp << 2 | 2);
+                    break;
+                case 'T':
+                    temp = (uint64_t) (temp << 2 | 3);
+                    break;
+                default:	
+                    printf("Error! %c in oligo at %d is not a valid nucleotide: Encoded as A\n",x.sequence[i] , x.uDist);
+                    temp = (uint64_t) (temp << 2 | 0);					
+            }
+        }
+        Coded[nblocks - block - 1] = temp;
+    }
+    return Coded;
+}
+
+bool blacklist_Check(uint64_t seed, int seedLen, entry* hashTable, long bLen, uint8_t* bCoded, OLIGO olig){
+    if(debugLevel > 2) {fprintf(stderr,"Call to blacklist_Check of oligo at %d in %d\n",olig.uDist,olig.gene);}
+    uint64_t hashKey[2]={0,0};
+    uint64_t* ehit;
+    uint64_t* rhit;
+    uint64_t window[2];
+    int w, slot[2], shiftno;
+    int threshold = olig.length * seqSimilarity / 100;
+    
+
+    ehit = (uint64_t *) malloc (nBlocks * sizeof(uint64_t));
+    if(!encodeOLIGO(ehit,olig)){
+        cout << "Could not encode OLIGO\n";
+        exit(EXIT_FAILURE);
+    }
+
+    rhit = (uint64_t*) malloc(nBlocks * sizeof(uint64_t));
+    for(int i = 0; i < nBlocks; ++i)
+        rhit[i] = 0;
+    reverseBlocks(lchars,nBlocks,ehit,rhit);
+    int offpos = 0;
+    window[0] = ehit[0];
+    window[1] = rhit[0];
+
+    for (int pass=1; pass <= olig.length - seedLen + 1; ++pass){
+        for(int strand = 0; strand < 2; strand++){
+            hashKey[strand] = (uint64_t) (window[strand] & seed); 
+            slot[strand] = search_Hash(hashKey[strand], hashTable);	
+        }
+        if(slot[0] == -1 && slot[1] == -1){
+            continue;
+        }
+
+        for(int strand = 0; strand < 2; ++strand){
+            if(slot[strand] == -1) continue;
+            w=0;
+            while (w < hashTable[slot[strand]].size){
+                long match_pos = hashTable[slot[strand]].pos[w] + offpos;
+            	if (match_pos-offpos > olig.length - 1 && match_pos < bLen){
+                    uint64_t* bhit;
+                    bhit = (uint64_t*) malloc(nBlocks * sizeof(uint64_t));
+                    getBlocks(bCoded,match_pos,bhit);
+                    int count = identity_Count((strand == 0) ? ehit : rhit,bhit);
+                    free(bhit);
+            	    if (count < threshold && count < consecMatch){ //No Match
+            	    	++w;
+                    } else if(count >= threshold){ //Similarity Match
+                        free(ehit);
+                        free(rhit);
+                        return false;
+                    } else { //Potential Consecutive Identity Match
+                        //TODO: Implement a check here
+                        ++w;
+                    }
+                } else {
+                    ++w;
+                }
+            }
+        }
+        for(int strand = 0; strand < 2; strand++){
+            window[strand] >>= 2;
+            int curBlock = (pass + seedLen - 1) / (BLOCK / 2);
+            int posinBlock = (pass + seedLen - 1) % (BLOCK / 2);
+            int adjust = BLOCK - 2 *(posinBlock +1);
+            if(curBlock < nBlocks) {
+                window[strand] |= (((strand == 0) ? ehit : rhit)[curBlock] & (uint64_t) (3 << (posinBlock * 2))) << adjust;
+            }
+        }
+        ++offpos;
+    }
+
     free(ehit);
     free(rhit);
     return true;
@@ -571,7 +711,7 @@ void kane_15(long pose,  long posc, uint8_t *simarray,long assoc, long* assocLis
     //fprintf(stderr,"olig at %ld matches at %ld\n",pose,posc);
 }
 
-void gc_Content(uint8_t* gCoded, uint8_t *simarray){
+void gc_Content(uint8_t* gCoded, uint8_t *simarray,long nbytes){
     if(debugLevel > 1) {fprintf(stderr,"Call to gc_Content\n");}
     long gccount = 0;
     int loff = 4;
@@ -840,75 +980,8 @@ long hash_Insert(uint64_t k, uint64_t *T, uint64_t s, unsigned long PRIME){
 	return 0;
 }			
 
-void similarity_Check(uint8_t *gCoded, uint8_t *simarray, const char *seedSeq, long *geneLoc){
-        if(debugLevel > 0) {fprintf(stderr,"Call to similarity_Check\n");}
-	uint64_t seed=0; 
-	seed = get64seed(seedSeq);	
-	//Begin Hashing
-	uint64_t window = 0, hashKey=0;
-	uint64_t *hashTable = (uint64_t *) malloc (PRIME_FH*sizeof(uint64_t));
-	long *posTable = (long *) malloc (PRIME_FH*sizeof(long));
-        //long *assocCount = (long *) malloc (gSize*sizeof(long));
-        //long **assocTable = (long **) malloc (gSize*sizeof(long*));
-	for (long i=0; i < PRIME_FH; ++i) {
-		hashTable[i] = seed + 1;
-		posTable[i] = -1;
-	}/*
-        for (long i =0; i < gSize; ++i){
-            assocCount[i] = 0;
-            assocTable[i] = NULL;
-        }*/
-        //printf("initiallized\n");
-        
-	window = get64bit(nbytes-1, gCoded);
-	int shiftc=0;
-        int curSeq =geneno-1;
-        int elims = 0;
-	for (long location = gSize-1; location >= OLIG_LENGTH-1; --location) {				
-                if(location < geneLoc[curSeq]){--curSeq;}
-		hashKey = (uint64_t) (window & seed);  
-		long searchRes = hash_Search(hashKey, hashTable, seed, PRIME_FH);
-		if (( searchRes != -1)){
-                    long pose = posTable[searchRes];
-                    if(pose >=  geneLoc[curSeq + 1]){//Any match will always be later in the genome
-                        //for(long i = -1; i < assocCount[pose]; ++i){
-                            long pos = pose;
-                            //if(i >= 0) pos = assocTable[pose][i];
-                            if (simarray[location] == 0 || simarray[pos] == 0){
-                                elims += kane_75(gCoded, pos,  location, simarray, curSeq,geneLoc);
-                                //printf("kane75 at %ld and %ld, eliminated %d positions\n",location,pos,elims);
-                            }
-                        //}
-                    }/* else {
-                        if(++assocCount[pose] % maxseqIdentity == 1){
-                            int newsize = (assocCount[pose]/maxseqIdentity +1)*maxseqIdentity;
-                            assocTable[pose] = (long*) realloc(assocTable[pose],newsize*sizeof(long));
-                            for(int i = assocCount[pose]; i < newsize;++i){assocTable[pose][i] = -1;}
-                        }
-                        assocTable[pose][assocCount[pose]-1] = location;
-                    }*/
-                    posTable[searchRes] = location;
-                } else {
-                    posTable[hash_Insert(hashKey, hashTable, seed, PRIME_FH)] = location;
-                }
 
-		window >>=  2;
-                ++shiftc; 
-		if (shiftc % 4 == 0)
-			window |= (((uint64_t) gCoded[location/4-8]) << (BLOCK - 8));
-	}
-        //printf("elims: %d\n",elims);
-		
-	free(hashTable);//delete [] hashTable;
-	free(posTable);//delete [] posTable;
-        /*free(assocCount);
-        for(long i=0; i < gSize;++i){
-            free(assocTable[i]);
-        }
-        free(assocTable);*/
-}
-
-unsigned long identity_Check(uint8_t *gCoded, uint8_t *simarray, long *geneLoc){
+unsigned long identity_Check(uint8_t *gCoded, uint8_t *simarray, long *geneLoc, long nbytes){
         if(debugLevel > 0) {fprintf(stderr,"Call to identity_Check\n");}
 	//Begin Coding "111111111111111"
 	uint64_t seed=0; 
@@ -945,14 +1018,15 @@ unsigned long identity_Check(uint8_t *gCoded, uint8_t *simarray, long *geneLoc){
 		--rpos;
 		nexwinSize = 4;
 	}
-	else
-		nexwin = (window >> 2*consecMatch) & ((1 << 2*nexwinSize)-1); //         
+	else{
+	    nexwin = (window >> 2*consecMatch) & ((1 << 2*nexwinSize)-1); //         
+        }
         //printf("indentity_Check: Windows!\n");        
 	hashKey[0] = (uint64_t) (window & seed);
         reverseBlocks(BLOCK/2 - consecMatch,1,hashKey+0,hashKey+1);
         hashKey[1] &= seed;
 	int curSeq = geneno - 1;
-	for (long location = gSize-1; location >= consecMatch -1; --location) {
+	for (long location = gSize-1; location >= consecMatch-1; --location) {
                 if(location < geneLoc[curSeq]){--curSeq;}
                 long searchRes[2];
                 searchRes[0] = hash_Search(hashKey[0], hashTable, seed, PRIME_MM);
@@ -988,7 +1062,7 @@ unsigned long identity_Check(uint8_t *gCoded, uint8_t *simarray, long *geneLoc){
                 hashKey[1] = (hashKey[1] << 2) | ((uint64_t)(~nexwin & 3));
                 hashKey[1] &= seed;
 		nexwin >>= 2;  --nexwinSize;
-		if (nexwinSize == 0){
+		if (nexwinSize == 0 && rpos >= 0){
 			nexwin = gCoded[rpos];
 			--rpos;
 			nexwinSize = 4;
@@ -1267,6 +1341,77 @@ long CalcPolyNCorrection(int gene, long pos, int NcorSize, long* NcorPos, int* N
     return (RefIndex >= 0) ? (Ncor[RefIndex] - geneNcor[gene]) : 0;
 }
 
+long DistanceToNearestN(int gene, long pos, int NcorSize, long* NcorPos, int* Ncor, int* geneNcor, bool bUpstream){
+    if(debugLevel > 3) {fprintf(stderr,"Call to DistanceToNearestN %ld\n",pos);}
+    int RefIndex = -1;
+    int l = 0;
+    int r = NcorSize - 1;
+    while(l <= r){
+        int m = (l + r) / 2;
+        if(NcorPos[m] > pos){
+            r = m - 1;
+            if(!bUpstream){
+                RefIndex = m;
+            }
+        } else if(NcorPos[m] < pos){
+            l = m + 1;
+            if(bUpstream){
+                RefIndex = m;
+            }
+        } else if(NcorPos[m] == pos){
+            l = r+1;
+            RefIndex = m;
+            //This shouldn't happen: pos is the last bp in an oligo. Every
+            //element of NcorPos is the first standard base after a poly-N, no
+            //valid oligos contain a non-standard base.
+            //Therefore if pos is in NcorPos, then the oligo defined by pos is
+            //invalid, and shouldn't be printed, and shouldn't be calling this
+            //function.
+            printf("WARNING: Invalid oligo in sequence %d\n",gene);
+        }
+    }
+    return (RefIndex >= 0) ? abs(pos - NcorPos[RefIndex]) - 1 : gSize + 1; 
+}
+
+void print_Oligo(OLIGO olig, FILE* output){
+    if(debugLevel > 2) {fprintf(stderr,"Call to print_Oligo(struct) at %ld in sequence %d\n",olig.uDist,olig.gene);}
+    unsigned char* uPadSeq = olig.sequence;
+    unsigned char* oligSeq = olig.sequence + olig.uPad;
+    unsigned char* dPadSeq = oligSeq + olig.length;
+    fprintf(output, "Target sequence:%d\t%.*s\tLength:%d\tTm:%0.2f\tDistance(from 5'):%d\tDistance(from 3'):%d",olig.gene+1,olig.length,oligSeq,olig.length,olig.Tm,olig.uDist,olig.dDist);
+    if(olig.uPad > 0) fprintf(output,"\tPadding(5' %dbp):%.*s",olig.uPad,olig.uPad,uPadSeq);
+    if(olig.dPad > 0) fprintf(output,"\tPadding(3' %dbp):%.*s",olig.dPad,olig.dPad,dPadSeq);
+    fprintf(output,"\n");
+}
+
+void initOLIGO(OLIGO* self, int gene, long pos, int nOligTiles, long* geneLoc, unsigned char* gSequence, float* tmarray, long curNcor, long uNDist, long dNDist){
+    int tiledLength = tilingLen + nOligTiles-1;
+    self->gene = gene;
+    self->length = tiledLength;
+    float avgTm = 0;
+    for(long i = pos - nOligTiles + 1; i <= pos; ++i){
+        avgTm += tmarray[i-gseqOff] * 1.0005;
+    }
+    self->Tm = avgTm / nOligTiles / 1.0005;
+    self->uDist = pos - gseqOff-geneLoc[gene] - tiledLength + 1 + curNcor;
+    self->dDist = geneLoc[gene+1]-(pos-gseqOff)- 1 + curNcor;
+    if(gene == 0) {
+        self->uDist += gseqOff;
+        self->dDist += gseqOff;
+    }
+    if(paddingLen > 0){
+        self->uPad = (paddingLen < self->uDist) ? paddingLen : self->uDist;
+        self->uPad = (self->uPad < uNDist) ? self->uPad : uNDist;
+        self->dPad = (paddingLen < self->dDist) ? paddingLen : self->dDist;
+        self->dPad = (self->dPad < dNDist) ? self->dPad : dNDist;
+    } else {
+        self->uPad = 0;
+        self->dPad = 0;
+    }
+    self->sequence = gSequence + (pos-tiledLength + 1 - self->uPad) * sizeof(unsigned char);
+    //if(gene == 22 && self->dDist == 3) printf("dPad: %d\n",self->dPad);
+}
+
 void print_Oligo(int gene, long pos, int nOligTiles, long* geneLoc, int* geneLen, FILE* output, unsigned char* gSequence, float* tmarray,int NcorSize, long* NcorPos, int* Ncor, int* geneNcor)
 {
     if(debugLevel > 2) {fprintf(stderr,"Call to print_Oligo at %ld\n",pos);}
@@ -1275,7 +1420,7 @@ void print_Oligo(int gene, long pos, int nOligTiles, long* geneLoc, int* geneLen
     //if(tiledLength > OLIG_LENGTH){
     //    printf("Gene: %d, pos: %d, tiles: %d\n",gene,pos,nOligTiles);
     //}
-    fprintf(output, "Target sequence:%d\t",gene+1);
+    fprintf(output, "_Target sequence:%d\t",gene+1);
     for (long i = pos - tiledLength + 1; i <= pos; ++i){
     	fprintf(output, "%c", gSequence[i]);
     }
@@ -1305,7 +1450,7 @@ void print_Oligo(int gene, long pos, int nOligTiles, long* geneLoc, int* geneLen
         }
     }
     fprintf(output, "\n");
-    ++olig_total;
+    //++olig_total;
 }
 
 void print_Intervals(long* geneLoc, int* geneLen, FILE* output, unsigned char* gSequence, float* tmarray, uint8_t* simarray,int NcorSize,long* NcorPos,int* Ncor,int* geneNcor){
@@ -1355,8 +1500,7 @@ void print_Intervals(long* geneLoc, int* geneLen, FILE* output, unsigned char* g
     }
 }
 long maxSize = 0;
-unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned char *gSequence, long *geneLoc, 
-			        FILE *output, float *tmarray, int *geneLen,int NcorSize, long* NcorPos, int* Ncor, int* geneNcor){
+unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned char *gSequence, long *geneLoc, float *tmarray, int *geneLen,int NcorSize, long* NcorPos, int* Ncor, int* geneNcor, OLIGO* &OLIGList){
         if(debugLevel > 0) {fprintf(stderr,"Call to intensive_Homology\n");}
 	unsigned long memoryUsed=0;
         time_t timer_s, timer_f;
@@ -1369,44 +1513,50 @@ unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned ch
         entry* hashTableList[8];
         uint64_t seedSeqList[8];
         uint64_t seedLenList[8];
-        long** Gene = NULL;
-        int** nOligTiles = NULL;
         int* oligsperGene = NULL;
         int* geneSize = NULL;
-        Gene = (long**) malloc(geneno * sizeof(long*));
-        nOligTiles = (int**) malloc(geneno * sizeof(int*));
+        OLIGO** Gene_OligList = NULL;
         oligsperGene = (int*) malloc(geneno * sizeof(int));
-        memoryUsed += geneno * (sizeof(long*) + sizeof(int));
-        if(maxOligs == -1){
-            geneSize = (int*) malloc(geneno * sizeof(int)); 
-            memoryUsed += geneno * sizeof(int);
-        }
+        Gene_OligList = (OLIGO**) malloc(geneno * sizeof(OLIGO*));
+        memoryUsed += geneno * sizeof(OLIGO*);
         for(int i = 0; i < geneno; ++i){
-            if(maxOligs == -1){
-                Gene[i] = NULL;
-                geneSize[i] = 0;
-                nOligTiles[i] = NULL;
-            } else {
-                Gene[i] = (long*) malloc(maxOligs * sizeof(long));
-                nOligTiles[i] = (int*) malloc(maxOligs * sizeof(int));
-                for(int j = 0; j < maxOligs; ++j){
-                    Gene[i][j] = -1;
-                    nOligTiles[i][j] = 0;
-                }
-            }
             oligsperGene[i] = 0;
+        }
+        if(maxOligs == -1){
+            geneSize = (int*) malloc(geneno * sizeof(int));
+            for(int i = 0; i < geneno; i++){
+                geneSize[i] = 1;
+                Gene_OligList[i] = (OLIGO*) malloc(sizeof(OLIGO));
+            }
+            memoryUsed += geneno * (sizeof(OLIGO) + sizeof(int));
+
+        } else {
+            for(int i = 0; i < geneno; i++){
+                Gene_OligList[i] = (OLIGO*) malloc(maxOligs * sizeof(OLIGO));
+            }
+            memoryUsed += maxOligs * geneno * sizeof(OLIGO);
         }
         timer_s = time(NULL);
         int chunk = 1;
-#pragma omp parallel for shared(gCoded) private(tid) schedule(dynamic,chunk)
-        for(int i = 0; i < 8; ++i){
-            hashTableList[i] = (entry*) malloc(PRIME_IH * sizeof(entry));
-            seedSeqList[i] = get64seed(seed_Phase2[i]);
-            seedLenList[i] = strlen(seed_Phase2[i]);
-            create_Hash(hashTableList[i],gCoded, seedSeqList[i],seedLenList[i]);
+        int curTable = 0;
+#pragma omp parallel for shared(gCoded,hashTableList,seedSeqList,seedLenList) private(curTable) schedule(dynamic,chunk)
+        for(curTable = 0; curTable < 8; ++curTable){
+            hashTableList[curTable] = (entry*) malloc(PRIME_IH * sizeof(entry));
+            seedSeqList[curTable] = get64seed(seed_Phase2[curTable]);
+            seedLenList[curTable] = strlen(seed_Phase2[curTable]);
+            create_Hash(hashTableList[curTable],gCoded, seedSeqList[curTable],seedLenList[curTable],nbytes,PRIME_IH);
         }
 
         memoryUsed += 8*PRIME_IH * sizeof(entry);
+
+        unsigned long sumPos = 0;
+	for (long i=0; i < PRIME_IH; ++i) {
+                for(int j = 0; j < 8; ++j)
+		sumPos += hashTableList[j][i].size;
+	
+        }
+	memoryUsed = sumPos * sizeof (long) + 8;
+
         timer_f = time(NULL);
 	printf("Intensive Homology Hash Tables Created in %ds\n",(timer_f - timer_s));
         //Hash Table Structure
@@ -1416,43 +1566,67 @@ unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned ch
         //for(int i=0; i<8;i++){
         //    print_HashTable(hashTableList[i]);
         //}
+        
+        uint8_t** tmp_simarray = (uint8_t**) malloc(sizeof(uint8_t*) * MAX_NUM_THREAD);
+        for(int i = 0; i < MAX_NUM_THREAD; i++){
+            tmp_simarray[i] = (uint8_t*) malloc(sizeof(uint8_t) * gSize);
+        }
+        memoryUsed += MAX_NUM_THREAD * gSize * sizeof(uint8_t);
 
 	olig_total = 0;
-	chunk = 1;
-        int     i, oligs;
-	omp_set_num_threads(MAX_NUM_THREAD);
+	chunk = (geneno < MAX_NUM_THREAD) ? 1 : geneno / MAX_NUM_THREAD;
 
-    
-
-#pragma omp parallel for shared(gCoded,seedSeqList,seedLenList,hashTableList,chunk) private(i,oligs) schedule(dynamic,chunk)
+	if (MAX_NUM_THREAD >= geneno)	
+	    omp_set_num_threads(geneno);
+	else 
+	    omp_set_num_threads(MAX_NUM_THREAD);
+        int i;
+#pragma omp parallel for shared(simarray) private(i) schedule(dynamic,chunk)
 	for (i=0; i < geneno; ++i){
-            oligs = 0;
+            //printf("gene: %d\t",i);
+            #pragma omp flush(simarray)
+            {
+                memcpy(tmp_simarray[i % MAX_NUM_THREAD],simarray,gSize);
+            }
             int seenZero;
             long bestZero, seenPlace, bestPlace, canPlace;
             long match_pos;
+            long lastPlace = -1;
             int count = 0;
 
 	    do{
                 match_pos = -1;
 		seenZero = 0, bestZero = 0, seenPlace = -1, bestPlace = -1, canPlace=-1;
-		for(long j = geneLoc[i] + OLIG_LENGTH - 1; j < geneLoc[i+1]; ++j){
-		    if (simarray[j] == 0){
-		    	++seenZero;
-		    	seenPlace = j;
-		    	if (seenZero > bestZero) {bestZero = seenZero; bestPlace = seenPlace;}
+                if(maxOligs == -1){ //Find the first potential oligo
+                    long j = geneLoc[i] + OLIG_LENGTH -1;
+                    while(tmp_simarray[i %MAX_NUM_THREAD][j] != 0 & j < geneLoc[i+1]) j++;
+                    if(j < geneLoc[i+1]){
+                        bestPlace = j;
+                    }
+                } else { // Find the oligo in the middle of the longest still valid stretch
+		    for(long j = geneLoc[i] + OLIG_LENGTH - 1; j < geneLoc[i+1]; ++j){
+		        if (tmp_simarray[i % MAX_NUM_THREAD][j] == 0){
+		        	++seenZero;
+		        	seenPlace = j;
+		        	if (seenZero > bestZero) {bestZero = seenZero; bestPlace = seenPlace;}
+		        }
+		        else 
+		        	seenZero = 0;
 		    }
-		    else 
-		    	seenZero = 0;
-		}
-		if (bestPlace != -1){				
+                }
+		if (bestPlace != -1){
 		    canPlace = (tilingLen == OLIG_LENGTH) ? bestPlace - bestZero/2 : bestPlace;
+                    if(lastPlace == canPlace){
+                        printf("cp: %ld\n",canPlace);
+                    }
+                    lastPlace = canPlace;
 		    if (secStr){
                         bool res = secondary_Structure(gCoded, canPlace);
                         if(!res) match_pos = -3; // Invalid secondary_Structure result 
                     }
                     for (int j = 0; j < 8  && match_pos == -1; ++j)
                     {
-                        bool res = second_Check(seedSeqList[j], seedLenList[j], hashTableList[j], gCoded, canPlace,geneLoc[i],geneLoc[i+1]-1, simarray);
+                        bool res = second_Check(seedSeqList[j], seedLenList[j], hashTableList[j], gCoded, canPlace,geneLoc[i],geneLoc[i+1]-1, tmp_simarray[i % MAX_NUM_THREAD]);
                         if(!res) match_pos = 0;
                     }
                     if (match_pos == -1){
@@ -1461,7 +1635,7 @@ unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned ch
                         int cur_run = 0;
                         for(long j = 0; j < nTiles; ++j){
                             
-                            if(!simarray[canPlace-j]){
+                            if(!tmp_simarray[i % MAX_NUM_THREAD][canPlace-j]){
                                 if(cur_run == 0){
                                     cur_r = canPlace -j;
                                 }
@@ -1476,59 +1650,61 @@ unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned ch
                         }
                         canPlace = max_r;
                         for(int j = 0; j < max_run; ++j){
-                            simarray[canPlace-j] = 1;
+                            tmp_simarray[i % MAX_NUM_THREAD][canPlace-j] = 1;
                         }
                         if(maxOligs == -1 && oligsperGene[i] >= geneSize[i]){
-                            if(geneSize[i]){
-                                geneSize[i] *= 2;
-                            } else {geneSize[i] = 1;}
-                           Gene[i] = (long*) realloc(Gene[i],geneSize[i] * sizeof(long)); 
-                           nOligTiles[i] = (int*) realloc(nOligTiles[i],geneSize[i] * sizeof(int)); 
-                           for(int j = oligsperGene[i]+1; j < geneSize[i]; ++j){
-                               Gene[i][j] = -1;
-                               nOligTiles[i][j] = 0;
-                           }
+                            geneSize[i] *= 2;
+                            Gene_OligList[i] = (OLIGO*) realloc(Gene_OligList[i],geneSize[i] * sizeof(OLIGO));
                         }
-                        nOligTiles[i][oligsperGene[i]] = max_run;
-                        Gene[i][oligsperGene[i]++] = canPlace+gseqOff;
+                        long gPos = canPlace+gseqOff;
+                        long Ncorval = CalcPolyNCorrection(i,gPos,NcorSize,NcorPos,Ncor,geneNcor);
+                        long uNDist = DistanceToNearestN(i,gPos,NcorSize,NcorPos,Ncor,geneNcor,1);
+                        long dNDist = DistanceToNearestN(i,gPos,NcorSize,NcorPos,Ncor,geneNcor,0);
+                        initOLIGO(&Gene_OligList[i][oligsperGene[i]++],i,gPos,max_run,geneLoc,gSequence,tmarray,Ncorval,uNDist,dNDist);
 		    }else if(match_pos == -3){
-                        simarray[canPlace] = 1;
+                        tmp_simarray[i % MAX_NUM_THREAD][canPlace] = 1;
                         match_pos = -1;
 		    }
 		}else 
 		    match_pos = -2; //All positions invalid
+
 	    }while(match_pos != -2 && (maxOligs == -1 || oligsperGene[i] < maxOligs)); //While matches are found/possible
-	}
-
-        for(int i = 0; i < geneno; ++i){
-            for(int j = 0; j < oligsperGene[i]; j++){
-                if(outputMode == 0){
-	            print_Oligo(i,Gene[i][j],nOligTiles[i][j],geneLoc,geneLen,output,gSequence,tmarray,NcorSize,NcorPos,Ncor,geneNcor);
-                }
-                simarray[Gene[i][j]] = 0;
+            #pragma omp flush(simarray)
+            for(long j = 0; j < gSize; j++){
+                simarray[j] |= tmp_simarray[i % MAX_NUM_THREAD][j];
             }
+	}
+        //printf("PostSearch\n");
+        for(int i = 0; i < MAX_NUM_THREAD; i++){
+            free(tmp_simarray[i]);
         }
-
-	unsigned long sumPos = 0;
-	for (long i=0; i < PRIME_IH; ++i) {
-                for(int j = 0; j < 8; ++j)
-		sumPos += hashTableList[j][i].size;
-	
+        free(tmp_simarray);
+        //printf("PostFree\n");
+        olig_total = 0;
+        for(int i = 0; i < geneno; i++){
+            olig_total += oligsperGene[i];
         }
-	memoryUsed = sumPos * sizeof (long) + 8;
-	
+        //printf("PostCount\n");
+        OLIGList = (OLIGO*) malloc(olig_total * sizeof(OLIGO));
+        memoryUsed += olig_total * sizeof(OLIGO);
+        int curOlig = 0;
+        for(int i = 0; i < geneno; i++){
+            memoryUsed += geneSize[i] * sizeof(OLIGO);
+            for(int j = 0; j < oligsperGene[i]; j++){
+                memcpy(&OLIGList[curOlig++],&Gene_OligList[i][j],sizeof(OLIGO));
+            }
+            free(Gene_OligList[i]);
+        }
+        free(Gene_OligList);
+        //printf("PostCopy\n");
 	for(int i = 0; i < 8; ++i){
-            free(hashTableList[i]->pos);
+            for(int j = 0; j < PRIME_IH; j++){
+                free(hashTableList[i][j].pos);
+            }
             free(hashTableList[i]);
         }
-        for(int i = 0; i < geneno; ++i){
-            free(Gene[i]);
-            free(nOligTiles[i]);
-        }
-        free(Gene);
-        free(nOligTiles);
-        free(geneSize);
         free(oligsperGene);
+        free(geneSize);
 		
 	return memoryUsed;
 }
@@ -1674,9 +1850,223 @@ void append_RevComp(int stringlength, unsigned char* string, unsigned char* comp
     }
 }
 
+uint8_t* encodeSequence(uint8_t* &Coded, long sSize, unsigned char* Sequence){
+    long nbytes = sSize/4;
+    if(!Coded) return 0;
+    uint8_t temp = 0;
+    int stpoint = sSize % 4;
+    for(long i = stpoint; i < sSize; i += 4) {
+        for(int j = 0; j < 4; j++) 
+            switch (Sequence[j+i]) {
+                case 'A':
+                	temp = (uint8_t) (temp << 2 | 0);
+                	break;
+                case 'C':
+                	temp = (uint8_t) (temp << 2 | 1);
+                	break;
+                case 'G':
+                	temp = (uint8_t) (temp << 2 | 2);
+                	break;
+                case 'T':
+                	temp = (uint8_t) (temp << 2 | 3);
+                	break;
+                default:
+                	cout << "Error! " << Sequence[j+i] << "is not a valid nucleotide.\n";
+                	temp = (uint8_t) (temp << 2 | 0);					
+            }	
+        Coded[(i-stpoint)/4] = temp;
+    }
+    return Coded;
+}
+
+
+
+unsigned long ProcessBlacklistSeq(long sSize, unsigned char* Sequence, OLIGO* &OLIGList){
+    if(olig_total < 1) return 0; // No need to do anything if there are no oligos
+
+    unsigned long memoryEval;
+    unsigned long memoryUsed = 0;
+    unsigned long peakMemory = 0;
+
+    ///// Clean Up the Sequence
+    unsigned char* bSequence = (unsigned char*) malloc(sSize * sizeof(unsigned char));
+    peakMemory += sizeof(unsigned char) * sSize;
+    long i = 0;
+    long bSize = 0;
+    bool prevNonStandard = false;
+    while (i < sSize){
+        switch (Sequence[i]) {
+    	    case 'a': case 'A':
+        	bSequence[bSize++] = 'A';
+                prevNonStandard = false;
+        	break;
+            case 'c': case 'C':
+        	bSequence[bSize++] = 'C';
+                prevNonStandard = false;
+        	break;
+            case 'g': case 'G':
+        	bSequence[bSize++] = 'G';
+                prevNonStandard = false;
+        	break;
+            case 't': case 'T':
+        	bSequence[bSize++] = 'T';
+                prevNonStandard = false;
+        	break;
+            case '\n': case '\r':
+        	break;
+            default: //Non-Standard nucleotides
+                if(!prevNonStandard){
+	    	    bSequence[bSize++] = 'A'; 
+	    	    prevNonStandard = true;
+                }
+        }
+        ++i;
+    }
+    bSequence = (unsigned char*) realloc(bSequence,bSize * sizeof(unsigned char));
+    memoryUsed = sizeof(unsigned char) * bSize;
+
+    ///// Encode The Sequence
+    uint8_t* bCoded = (uint8_t *) malloc (bSize/4 * sizeof(uint8_t));
+    if(!encodeSequence(bCoded,bSize,bSequence)) {
+        cout << "Could not encode blacklist sequence\n";
+        exit(EXIT_FAILURE);
+    }
+    memoryUsed += (bSize - bSize % 4) * sizeof(uint8_t);
+    if(memoryUsed > peakMemory) peakMemory = memoryUsed;
+    free(bSequence);
+    memoryUsed -= sizeof(unsigned char) * bSize;
+    bSize -= bSize % 4;
+
+    int numSeeds = 8;
+
+    //Create Hash Table
+    int nthreads, tid;
+    if (MAX_NUM_THREAD >= numSeeds)	
+	omp_set_num_threads(numSeeds);
+    else 
+    	omp_set_num_threads(MAX_NUM_THREAD);
+    
+    entry* hashTableList[8];
+    uint64_t seedSeqList[8];
+    uint64_t seedLenList[8];
+    unsigned long PRIME_BL = PRIME_IH;//5452619;
+    
+    int chunk = 1;
+#pragma omp parallel for shared(bCoded) schedule(dynamic,chunk)
+    for(int i = 0; i < numSeeds; ++i){
+        hashTableList[i] = (entry*) malloc(PRIME_BL * sizeof(entry));
+        seedSeqList[i] = get64seed(seed_Phase2[i]);
+        seedLenList[i] = strlen(seed_Phase2[i]);
+        create_Hash(hashTableList[i],bCoded, seedSeqList[i],seedLenList[i],bSize / 4,PRIME_BL);
+    }
+    
+
+    memoryUsed += numSeeds*PRIME_BL * sizeof(entry);
+    unsigned long sumPos = 0;
+    for (long i=0; i < PRIME_BL; ++i) {
+            for(int j = 0; j < numSeeds; ++j)
+    	sumPos += hashTableList[j][i].size;
+    
+    }
+    memoryUsed = sumPos * sizeof (long) + numSeeds;
+    if(memoryUsed > peakMemory) peakMemory = memoryUsed;
+
+    ///// Test Oligos
+    bool* OLIGPass = (bool*) malloc(olig_total * sizeof(bool));
+    for(int i = 0; i < olig_total; i++){
+        OLIGPass[i] = true;
+    }
+    memoryUsed = olig_total * sizeof (bool);
+    if(memoryUsed > peakMemory) peakMemory = memoryUsed;
+    int j = 0;
+    chunk = (olig_total < MAX_NUM_THREAD) ? 1 : olig_total / MAX_NUM_THREAD;
+    omp_set_num_threads((olig_total < MAX_NUM_THREAD) ? olig_total : MAX_NUM_THREAD);
+#pragma omp parallel for shared(bCoded,OLIGList,olig_total) private(j) schedule(dynamic,chunk) 
+    for (j=0; j < olig_total; ++j){
+        for (int k = 0; k < numSeeds  && OLIGPass[j]; ++k)
+        {
+            bool res = blacklist_Check(seedSeqList[k], seedLenList[k], hashTableList[k], bSize, bCoded, OLIGList[j]);
+            if(!res) OLIGPass[j] = false;
+        }
+    }
+
+    ////Move OLIGOS from the end to fill in positions of oligos which match the blacklist
+    for(int i = 0; i < olig_total; i++){
+        if(!OLIGPass[i]){
+            if(i != olig_total-1) memcpy(&OLIGList[i],&OLIGList[olig_total-1],sizeof(OLIGO));
+            OLIGPass[i] = OLIGPass[olig_total -1];
+            i--;
+            olig_total--;
+        }
+    }
+
+    OLIGList = (OLIGO*) realloc(OLIGList,olig_total * sizeof(OLIGO));
+
+    free(bCoded);
+    free(OLIGPass);
+    for(int i = 0; i < numSeeds; ++i){
+        for(int j = 0; j < PRIME_BL; j++){
+            free(hashTableList[i][j].pos);
+        }
+        free(hashTableList[i]);
+    }
+
+    return peakMemory;
+}
+
+unsigned long ProcessBlacklistFile(char * file,OLIGO* &OLIGList){
+    if(olig_total < 1) return 0; //No need to do anything if there are no oligos
+    FILE* bf;
+    if((bf = fopen(file, "rb")) == NULL){
+        printf("Error! Could not open blacklist file - %s: Skipping\n",file);
+        return 0 ;
+    }
+    long initSize = 1000;
+    unsigned long memoryEval;
+    unsigned long memoryUsed = 0;
+    unsigned long peakMemory = 0;
+    long curSize = initSize;
+    long sSize = 0;
+    unsigned char* tempSequence = (unsigned char*) malloc(sizeof(unsigned char) * curSize);
+    memoryUsed += sizeof(unsigned char) * curSize;
+    peakMemory = memoryUsed;
+    unsigned char line[100];
+    while(fgets((char*)line, 100,bf)){
+        if(line[0] == '>'){
+            if(sSize){
+                tempSequence = (unsigned char*) realloc(tempSequence,sizeof(unsigned char) * sSize);
+                memoryEval = ProcessBlacklistSeq(sSize,tempSequence, OLIGList);
+                if (memoryUsed  + memoryEval > peakMemory) peakMemory = memoryUsed + memoryEval;
+                free(tempSequence);
+                sSize = 0;
+                curSize = initSize;
+                tempSequence = (unsigned char*) malloc(sizeof(unsigned char) * curSize);
+                memoryUsed = sizeof(unsigned char) * curSize;
+            }
+            line[strlen((char*)line)-1] = '\0';
+            printf("Filtering against %s\n",line);
+        } else {
+            if(sSize + 100 >= curSize){
+                curSize *= 2;
+                tempSequence = (unsigned char*) realloc(tempSequence,sizeof(unsigned char) * curSize);
+                memoryUsed += sizeof(unsigned char) * curSize;
+            }
+            strcpy((char*)&tempSequence[sSize],(char*)line);
+            sSize += strlen((char*)line);
+        }
+    }
+    if(sSize){
+        memoryEval = ProcessBlacklistSeq(sSize,tempSequence, OLIGList);
+        if (memoryUsed  + memoryEval > peakMemory) peakMemory = memoryUsed + memoryEval;
+        free(tempSequence);
+    }
+    fclose(bf);
+    //cout << peakMemory << "\n";
+    return peakMemory;
+}
+
 int main (int argc, char * const argv[]) {
-        if(debugLevel > 0) {fprintf(stderr,"Call to main");}
-	cout << "------------------------------BEGIN------------------------------------\n";
+    	cout << "------------------------------BEGIN------------------------------------\n";
 	print_Time();
 
 	time_t seconds, secondf, timers, timerf;	
@@ -1694,6 +2084,7 @@ int main (int argc, char * const argv[]) {
 	uint8_t *gCoded;
 	uint8_t *simarray;
 	long tempSize;
+        char* blackliststr = NULL;
 	
 	const char *gfname = argv[1];
 	/* Open genome file for reading. */
@@ -1707,6 +2098,7 @@ int main (int argc, char * const argv[]) {
 		cout << "Error! no output file. \n";
 		exit(EXIT_FAILURE);
 	}
+
 	
 	for (int i=3; i < argc; i+=2){		
 		string param = argv[i];
@@ -1727,25 +2119,16 @@ int main (int argc, char * const argv[]) {
 		else if (param == "-saltCon") saltc = (double)(atoi(argv[i+1]))/1000.0;	
 		else if (param == "-secStr") secStr = true;	
                 else if (param == "-maxOligs") maxOligs = atoi(argv[i+1]); 
-                else if (param == "-outMode") outputMode = atoi(argv[i+1]);
-                else if (param == "-simCheck") {useFastHomology = true; --i;}
                 else if (param == "-paddingLen") paddingLen = atoi(argv[i+1]);
                 else if (param == "-tilingLen") tilingLen = atoi(argv[i+1]);
                 else if (param == "-maxThread") maxThread = atoi(argv[i+1]);
                 else if (param == "-debug") debugLevel=atoi(argv[i+1]);
+                else if (param == "-blacklist") blackliststr=argv[i+1];
 		else {
 			cout << "Error! in parameters!\n";
 			exit(EXIT_FAILURE);
 		}
 	}
-        if(outputMode != 0 && outputMode != 1){
-            cout << "outMode must be 0 (oligs) or 1 {intervals)\n";
-            exit(EXIT_FAILURE);
-        } else if(outputMode == 1){
-            if(maxOligs != -1)
-                cout << "WARNING: maxOligs must be -1 with intervals outMode, proceeding with maxOligs as -1\n";
-            maxOligs = -1;
-        }
         if(tilingLen > OLIG_LENGTH){
             cout << "WARNING: tilingLen must be less than or equal to length, continuing with tilingLen as length\n";
             tilingLen = OLIG_LENGTH;
@@ -1765,8 +2148,6 @@ int main (int argc, char * const argv[]) {
         maxtilingIdentity = (seqSimilarity * tilingLen / 100 + 1);
         mintilingIdentityDiff = maxtilingIdentity - maxseqIdentity;
         maxtilingIdentityDiff = OLIG_LENGTH - ((1-seqSimilarity) * tilingLen / 100 + 1) - maxseqIdentity;
-	
-	oligos = fopen(oligosname, "w");
 		
 	/* Get the genome file size. */
 	if(fseek(gf, 0, SEEK_END) == 0) {
@@ -1806,7 +2187,7 @@ int main (int argc, char * const argv[]) {
 	}
 	
 	/* Read tempSize bytes of data. */
-	if(fread(tempSequence, sizeof(unsigned char), tempSize/*/2*/, gf) != tempSize){///2) {
+	if(fread(tempSequence, sizeof(unsigned char), tempSize/*/2*/, gf) != tempSize){
 		cout << "Cannot read from: "<< gfname << "\n";
 		perror(NULL);
 		exit(EXIT_FAILURE);
@@ -1830,7 +2211,7 @@ int main (int argc, char * const argv[]) {
         int curNcor = 0;
         int curNcorIndex = 0;
         bool prevNonStandard = false;
-	while (i < tempSize){///2) {
+	while (i < tempSize){
 	    switch (tempSequence[i]) {
 	    	case '>':
                     if (geneno > 0){
@@ -1947,38 +2328,16 @@ int main (int argc, char * const argv[]) {
                 geneLen[0] -= gseqOff;
 	}
 	
-	/*          Start Encoding the genome 
-	 *************************************************** */
 	nbytes = gSize/4;
-	gCoded = (uint8_t *) malloc (nbytes * sizeof(uint8_t));
+        ////////////// Encode The Genome
+        gCoded = (uint8_t *) malloc (gSize/4 * sizeof(uint8_t));
+        if(!encodeSequence(gCoded,gSize,gSequence)) {
+            cout << "Could not encode blacklist sequence\n";
+            exit(EXIT_FAILURE);
+        }
 	memoryUsed += nbytes * sizeof(uint8_t);
 	if (memoryUsed > peakUsed) peakUsed = memoryUsed;
-	uint8_t temp = 0;
-	int stpoint = gseqOff;
-	for(long i = stpoint; i < gSize; i += 4) {
-	    for(int j = 0; j < 4; j++) 
-	    	switch (gSequence[j+i]) {
-	    	    case 'A':
-	    	    	temp = (uint8_t) (temp << 2 | 0);
-	    	    	break;
-	    	    case 'C':
-	    	    	temp = (uint8_t) (temp << 2 | 1);
-	    	    	break;
-	    	    case 'G':
-	    	    	temp = (uint8_t) (temp << 2 | 2);
-	    	    	break;
-	    	    case 'T':
-	    	    	temp = (uint8_t) (temp << 2 | 3);
-	    	    	break;
-	    	    default:
-	    	    	cout << "Error! " << gSequence[j+i] << "is not a valid nucleotide.\n";
-	    	    	temp = (uint8_t) (temp << 2 | 0);					
-	    	}	
-	    gCoded[(i-stpoint)/4] = temp;
-	}
-	/*          END Encoding the genome 
-	 *************************************************** */
-	gSize -= gseqOff;
+    	gSize -= gseqOff;
 	simarray = (uint8_t *) realloc(simarray, gSize * sizeof(uint8_t));
         memoryUsed -= gseqOff * sizeof(uint8_t);
         for (int j = 0; j < geneno; j++){
@@ -1988,7 +2347,7 @@ int main (int argc, char * const argv[]) {
             }
         }
 	//////////////////////////////// END create genome	
-	
+        
         printf("\nGenome size is %ldbp from %d target sequences\n",(gSize + gseqOff)/*/2*/, geneno);
         printf("%d Non-standard nucleotides encoded as Adenine/Thymine pairs\n",errorno);
         print_Count(simarray,geneLoc);
@@ -2002,7 +2361,7 @@ int main (int argc, char * const argv[]) {
         memoryUsed += gSize * (sizeof(long) + sizeof(long*));//association count and table
 	
 	timers = time(NULL);	
-	memoryEval = identity_Check(gCoded, simarray, geneLoc);
+	memoryEval = identity_Check(gCoded, simarray, geneLoc,nbytes);
         timerf = time(NULL);
         memoryUsed += (memoryEval * sizeof(long)); //number of associated positions
 	if (memoryUsed > peakUsed) peakUsed = memoryUsed;
@@ -2019,35 +2378,10 @@ int main (int argc, char * const argv[]) {
         if(maxThread != -1 and maxThread < MAX_NUM_THREAD){
             MAX_NUM_THREAD = maxThread;
         }
-	
-	// Kane Similarity Check
-        if(useFastHomology){
-	    if (MAX_NUM_THREAD >= 8)
-	    	omp_set_num_threads(8);
-	    else
-	    	omp_set_num_threads(MAX_NUM_THREAD);
-	    
-	    memoryUsed += MAX_NUM_THREAD*PRIME_FH * (sizeof(uint64_t) + sizeof(int));//hashTable, posTable
-	    if (memoryUsed > peakUsed) peakUsed = memoryUsed;
-	    
-            timers = time(NULL);
-	    int tid, chunk=1;
-#pragma     omp parallel for shared(gCoded, simarray, seed_Phase1, chunk, geneLoc) private(i, tid) schedule(dynamic,chunk)
-	    for (i = 0; i < 8; ++i){
-	        tid = omp_get_thread_num();
-	        similarity_Check(gCoded, simarray, seed_Phase1[i],geneLoc);// S8W10L18	
-	    }		
-	    timerf = time(NULL);
-	    printf ("Fast homology search done in %ld sec\n", (timerf - timers));
-            printf("Peak memory used in MB: %lu \n",((memoryUsed/1024)/1024));
-            print_Count(simarray,geneLoc);
-            //print_simArray(simarray);
 
-    	    memoryUsed -= MAX_NUM_THREAD*PRIME_FH * (sizeof(uint64_t) + sizeof(int));//hashTable, posTable
-	}
 	// GC Content Check
         timers = time(NULL);
-	gc_Content(gCoded, simarray);
+	gc_Content(gCoded, simarray,nbytes);
         timerf = time(NULL);
         printf ("GC Content check done in %ld sec\n",(timerf-timers));
         print_Count(simarray,geneLoc);
@@ -2063,38 +2397,70 @@ int main (int argc, char * const argv[]) {
 	timerf = time(NULL);
         printf("Peak memory used in MB: %lu \n",((memoryUsed/1024)/1024));
         print_Count(simarray,geneLoc);	
+
 	
         //Intensive Homology Search
 	timers = time(NULL);
         memoryEval = 0;
-	memoryEval = intensive_Homology(gCoded, simarray, gSequence, geneLoc, oligos, tmarray, geneLen,NcorSize,NcorPos,Ncor,geneNcor);
-        memoryUsed += memoryEval;
-	if (memoryUsed > peakUsed) peakUsed = memoryUsed;
+        OLIGO* OLIGList = NULL;
+	memoryEval = intensive_Homology(gCoded, simarray, gSequence, geneLoc, tmarray, geneLen,NcorSize,NcorPos,Ncor,geneNcor,OLIGList);
+	if (memoryUsed  + memoryEval > peakUsed) peakUsed = memoryUsed + memoryEval;
+        memoryUsed += sizeof(OLIGO) * olig_total;
 	timerf = time(NULL);
 	printf ("Intensive homology search done! in %ld sec\n", (timerf-timers));
-        printf("Peak memory used in MB: %lu \n",((memoryUsed/1024)/1024));
-        print_Count(simarray,geneLoc);
+        printf("Step used %luMB of memory\n",((memoryEval/1024)/1024));
+        //print_Count(simarray,geneLoc);
+        printf("There are %d candidate oligos from %d gene\n\n",olig_total,geneno);
         //print_simArray(simarray);
 
-        if(outputMode == 1){
-            print_Intervals(geneLoc,geneLen,oligos,gSequence,tmarray,simarray,NcorSize,NcorPos,Ncor,geneNcor);
-        }
-	
-	fclose(oligos);
-	
-	secondf = time (NULL);
-        printf("Total number of unique oligos are: %d for %d genes.\n",olig_total, geneno);
-        printf("Peak memory used in MB: %lu \n",((peakUsed/1024)/1024));
-	printf ("Running Time: %ld sec\n\n", (secondf-seconds));	
-	free(tmarray);
 	free(gCoded);
-	free(gSequence);
+        free(tmarray);
 	free(simarray);	
 	free(geneLoc);
         free(geneLen);
         free(geneNcor);
         free(NcorPos);
         free(Ncor);
+
+        /////Extract each filename from the given list of blacklist files and process
+        if(blackliststr != NULL){
+            char* commaPtr = NULL;
+            int commaPos = 0;
+
+	    timers = time(NULL);
+            while((commaPtr = strchr(&blackliststr[commaPos],',')) || commaPos < strlen(blackliststr)){
+                int nameLen = ((commaPtr == NULL) ? strchr(blackliststr,'\0') : commaPtr) - &blackliststr[commaPos];
+                unsigned char* file;
+
+                file = (unsigned char*) malloc(sizeof(unsigned char) * nameLen + 1); 
+                substr(file,(unsigned char*)(&blackliststr[commaPos]),strlen(blackliststr),0,nameLen);
+                commaPos += nameLen + 1;
+
+                memoryEval = ProcessBlacklistFile((char*)file,OLIGList);
+	        if (memoryUsed  + memoryEval > peakUsed) peakUsed = memoryUsed + memoryEval;
+                free(file);
+            }
+	    timerf = time(NULL);
+	    printf ("Blacklisting Done! in %ld sec\n", (timerf-timers));
+            printf("Step used used %luMB of memory\n\n",((memoryEval/1024)/1024));
+        }
+
+	oligos = fopen(oligosname, "w");
+        for(int i = 0; i < olig_total; ++i){
+            print_Oligo(OLIGList[i],oligos);
+        }
+	fclose(oligos);
+	
+	secondf = time (NULL);
+        printf("Total number of unique oligos are: %d for %d genes.\n",olig_total, geneno);
+        printf("Peak memory used in MB: %lu \n",((peakUsed/1024)/1024));
+	printf ("Running Time: %ld sec\n\n", (secondf-seconds));	
+	//for(i=0;i<olig_total;i++){
+        //    free(OLIGList[i].sequence);
+        //}
+
+	free(gSequence);
+        free(OLIGList);
 	cout<<endl;
 	print_Time();
 	cout << "------------------------------END--------------------------------------\n";

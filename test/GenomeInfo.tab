@@ -1,6 +1,5 @@
-test/Genomes	test/Genomes
-test/Genomes/2697049.gff	test/Genomes/2697049
-test/Genomes/1920748.gff.gz	test/Genomes/1920748
-test/Genomes/864596.gff	test/Genomes/864596
-test/Genomes/277944.gff	test/Genomes/277944
-test/Genomes/694009.gff	test/Genomes/694009
+test/Genomes/2697049.gff	2697049
+test/Genomes/1920748.gff.gz	1920748
+test/Genomes/864596.gff	864596
+test/Genomes/277944.gff	277944
+test/Genomes/694009.gff	694009

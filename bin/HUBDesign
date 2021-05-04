@@ -236,7 +236,7 @@ sub ConstructOptions(){
     #'dendrogram-out' => OPTINFO->new(def => 'Guide.dend', type => 's', cat => 'Assignment', msg => "Name of a file containing a dendrogram defining the relationships between genomes"),
     'penetrance' => OPTINFO->new(def => 50, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The minimum proportion of descendents of a node in which a cluster is present in order to include the cluster"),
     'similarity' => OPTINFO->new(def => 75, type => 'f', min =>0, max => 100, cat => 'Identification', msg => "The maximum amount of overall identity between probes targeting different taxa"),
-    'contguity' => OPTINFO->new(def => 15, type => 'i', min => 1, cat => 'Identification', msg => "The maximum number of consecutive identities between probes targeting different taxa"),
+    'contiguity' => OPTINFO->new(def => 15, type => 'i', min => 1, cat => 'Identification', msg => "The maximum number of consecutive identities between probes targeting different taxa"),
     'candidate-pool' => OPTINFO->new(def => 0, type => 'i', min => 0, cat => 'Identification', msg => "The maximum number of candidate probes for a taxon; 0 indicates no limit; Lowering the limit will reduce run-time but may reduce taxon coverage after filtering"),
     'gc-min' => OPTINFO->new(def => 30, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The minimum gc content of candidate probes"),
     'gc-max' => OPTINFO->new(def => 70, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The max gc content of candidate probes"),
@@ -530,6 +530,7 @@ sub GetPhaseCmd($){
             $Logger->Log("$name is an unrecognized option for $phase","ERROR") unless(exists $opts{$name});
             $value = $opts{$name};
         }
+        next unless (defined $value);
         push(@optstr,"-$opt $value");
     }
     my $flagstr;

@@ -326,9 +326,9 @@ sub CollapseBaits($$){
         my ($clust_id,$clust_pos) = $PGDictRef->{$taxon_id}->map_pos($pos);
         $candidate_probe_count++;
         my $brObj = HUBDesign::BaitRegion->new(taxon_id => $taxon_id,clust_id => $clust_id,pos => $clust_pos, seq => $seq);
-        #if(!defined $brObj->pos){
-        #    print STDERR $brObj->toStr(),"\t*$posStr&$pos\n";
-        #}
+        if(!defined $brObj->pos){
+            print STDERR $brObj->toStr(),"\t*$posStr&$pos\t_$clust_pos\n";
+        }
         push(@BRList,$brObj);
     }
     $Logger->Log("Read $candidate_probe_count candidate probes","INFO");

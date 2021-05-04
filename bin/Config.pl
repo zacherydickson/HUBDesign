@@ -3,7 +3,7 @@ use strict;
 use File::Basename;
 use Getopt::Std;
 use File::Spec;
-use FindBin
+use FindBin;
 use lib File::Spec->catdir($FindBin::RealBin,'..','lib');
 use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
 use HUBDesign::Logger;
@@ -21,8 +21,8 @@ if(exists $opts{h}){
         "\tAll other config options must be set manually\n";
 }
 
-$opts{a} = (exists $opts{a}) ? $opts{a} : 'mafft';
-$opts{l} = (exists $opts{l}) ? $opts{a} : 'dustmasker';
+$opts{a} = (exists $opts{a}) ? lc($opts{a}) : 'mafft';
+$opts{l} = (exists $opts{l}) ? lc($opts{l}) : 'dustmasker';
 
 my $Logger = HUBDesign::Logger->new(level => "WARNING");
 
