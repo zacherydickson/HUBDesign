@@ -282,7 +282,7 @@ sub option_cat_help($){
     foreach my $optName (@OPTION_ORDER){
         next unless(exists $OPTION_INFO{$optName});
         my $obj = $OPTION_INFO{$optName};
-        next unless($obj->cat eq $Category);
+        next unless(defined $obj->cat and $obj->cat eq $Category);
         my $range = " ";
         if(defined $obj->min or defined $obj->max){
             if(defined $obj->min){
@@ -439,7 +439,7 @@ sub RunPhase($){
     return if(CheckForSkip($phase,@FileTypes));
     my $cmd = GetPhaseCmd($phase);
     $Logger->Log("Running $phase...\n\t$cmd","INFO");
-    unless(system($cmd) == 0){
+    unless(system($cmd) == 0 and !CheckForSkip($phase,@FileTypes)){
         unless(exists $opts{keep} or $phase eq "Clustering" or ref($WorkingDir) ne "File::Temp"){
             $WorkingDir->unlink_on_destroy(0);
             $Logger->Log("Intermediate files saved for inspection","WARNING");

@@ -39,8 +39,9 @@ This version requires
 3. Navigate into the SA_BOND directory
 4. `g++ -fopenmp src/sabond.cpp -o sa_bond`
 5. Return to root of master directory
-6. `bin/Configure.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
-* Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
+6. `bin/Config.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
+  * Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
+
 
 ## Quick Running the pipeline
 
@@ -54,6 +55,7 @@ Blast databases of blacklist sequences can be provided with the --blast-db optio
 uses of the flag or with a comma separated list
 
 Further options for the pipeline are detailed with the --help option
+`bin/HUBDesign --help`
 
 Altering the HUBDesign.cfg, or providing a different config file will change the default parameters of the pipeline for ease of use with multiple profiles
 

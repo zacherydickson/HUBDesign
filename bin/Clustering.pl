@@ -105,7 +105,7 @@ if(exists $opts{l}){
 
 #Handle Num Threads
 $opts{t} = ValidateThreadCount($opts{t});
-$ALIGNER =~ s/\{thread\}/$opts{t}/;
+$ALIGNER =~ s/\{threads\}/$opts{t}/;
 
 #Handle Verbosity
 $opts{v} = 1 if (exists $opts{V});
@@ -292,8 +292,14 @@ sub AlignByProt($$){
     my $filename = $tmpFile->filename;
     $cmd =~ s/\{input\}/$filename/;
     open( my $fh, "-|", "$cmd") or warn "Alignment Error for $geneName: $!";
+    unless($fh){
+        die "Alignment error for $geneName: $!";
+    }
     my $AlnI = Bio::AlignIO->new(-fh => $fh, -format => $ALIGNER_FORMAT);
     my $alnObj = $AlnI->next_aln();
+    unless($alnObj){
+        die "Alignment error for $geneName: $!";
+    }
     ## Detranslate the protein sequences
     print STDERR "\t\tReturning aligned proteins to nucleotide sequence...\n" if(exists $opts{V});
     foreach my $seqObj ($alnObj->each_seq){
