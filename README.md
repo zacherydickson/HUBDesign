@@ -41,7 +41,8 @@ This version requires
 .. 2. `g++ -fopenmp src/sabond.cpp -o sabond`
 4. Set up Default Configs
 .. 1. Return to root of master directory
-.. 2. `bin/Configure -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
+.. 2. `bin/Configure.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
+.. * Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
 
 ## Quick Running the pipeline
 
@@ -63,12 +64,18 @@ The foollowing can be used to generate config files for editing
 
 ##Tutorial
 
-A directory of test files is provided in the repository
+A directory of test files is provided in the repository:
+* Genome files were created by running PROKKA on the raw genome files with the kingdom set to viruses,
+  names of the files are the taxon-ids of the genomes
+* The GenomeInfo file was created using awk to print out the path and the basename of each file
+* The Guide.tree file was generated from the lineages provided in NCBI's taxonomy for 56 refseq
+  coronavirus genomes
 
-Running `bin/HUBDesign --verbose --keep test/GenomeInfo.tab 2>test.log` 
 
-Will generate a directory with all final and intermediate files HUBDesign produces
+The following will generate a directory with all final and most intermediate files HUBDesign produces:
+`bin/HUBDesign --output-dir HUBDESIGN_test --verbose --keep test/GenomeInfo.tab 2>test.log` 
 
+The output of this command can be compared to the data provided in the test directory
 
 ## Advanced pipeline Use
 
