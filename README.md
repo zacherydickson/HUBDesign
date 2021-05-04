@@ -15,12 +15,12 @@ This version requires
 * Perl version 5.10.0+
 * BioPerl 1.7.10+
 * A multiple sequence aligner, the following are supported by default:
-.. * MAFFT version 7.0+
-.. * MUSCLE version 3.8.425+
-.. * CLUSTAL OMEGA version 1.2.1+
+  * MAFFT version 7.0+
+  * MUSCLE version 3.8.425+
+  * CLUSTAL OMEGA version 1.2.1+
 * An LCR masker (can be disabled), the following are supported by default:
-.. * dustmasker version 1.0.0+
-.. * sdust version 1.0.0+
+  * dustmasker version 1.0.0+
+  * sdust version 1.0.0+
 * BLASTn version 2.9.1+
 
 ## Outputs
@@ -37,12 +37,12 @@ This version requires
 1. Download the repository
 2. Navigate into the master directory
 3. Compile the SA_BOND executable
-.. 1. Navigate into the SA_BOND directory
-.. 2. `g++ -fopenmp src/sabond.cpp -o sabond`
+  1. Navigate into the SA_BOND directory
+  2. `g++ -fopenmp src/sabond.cpp -o sa_bond`
 4. Set up Default Configs
-.. 1. Return to root of master directory
-.. 2. `bin/Configure.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
-.. * Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
+  1. Return to root of master directory
+  2. `bin/Configure.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
+  * Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
 
 ## Quick Running the pipeline
 
