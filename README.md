@@ -36,13 +36,11 @@ This version requires
 
 1. Download the repository
 2. Navigate into the master directory
-3. Compile the SA_BOND executable
-  1. Navigate into the SA_BOND directory
-  2. `g++ -fopenmp src/sabond.cpp -o sa_bond`
-4. Set up Default Configs
-  1. Return to root of master directory
-  2. `bin/Configure.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
-  * Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
+3. Navigate into the SA_BOND directory
+4. `g++ -fopenmp src/sabond.cpp -o sa_bond`
+5. Return to root of master directory
+6. `bin/Configure.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
+* Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
 
 ## Quick Running the pipeline
 
@@ -50,7 +48,7 @@ Given that you have a tab delimited file with columns of paths-to-annotated-geno
 The pipeline can be run with 
 `bin/HUBDesign GenomeInfo.tab`
 
-A tree informaing the relationships between genomes can be provided with the --guide-tree option
+A tree informing the relationships between genomes can be provided with the --guide-tree option
 
 Blast databases of blacklist sequences can be provided with the --blast-db option either with multiple
 uses of the flag or with a comma separated list
@@ -62,7 +60,7 @@ Altering the HUBDesign.cfg, or providing a different config file will change the
 The foollowing can be used to generate config files for editing
 `bin/Config.pl`
 
-##Tutorial
+## Tutorial
 
 A directory of test files is provided in the repository:
 * Genome files were created by running PROKKA on the raw genome files with the kingdom set to viruses,
@@ -71,31 +69,30 @@ A directory of test files is provided in the repository:
 * The Guide.tree file was generated from the lineages provided in NCBI's taxonomy for 56 refseq
   coronavirus genomes
 
-
-The following will generate a directory with all final and most intermediate files HUBDesign produces:
+The following will generate a directory with all final and most intermediate files HUBDesign produces: 
 `bin/HUBDesign --output-dir HUBDESIGN_test --verbose --keep test/GenomeInfo.tab 2>test.log` 
 
 The output of this command can be compared to the data provided in the test directory
 
-## Advanced pipeline Use
+## Advanced pipeline use
 
 The individaul phases of the pipeline can be run separately, which is useful if you would like to do
-additional processing at any given step. (Ex. Filtering against NCBI's non-redundant nucleotide database for non-viral hits)
+additional processing at any given step. (Ex. Filtering against NCBI's non-redundant nucleotide database for non-viral hits) 
 As long as formats are preserved between steps this is relatively painless
 
 
-###Clustering
+### Clustering
 `bin/Clustering.pl [-options] GFF_Files ... > RepSeq.fna`
 
-###Assignment
+### Assignment
 `bin/Assignment.pl [-options] ClusterInfo ... > Assignment.tsv`
 
-###Identification
+### Identification
 `Identification.pl [-options] Assignment.tsv RepSeq.fna > CandidateBaitRegions.tab`
 
-###Filtering
+### Filtering
 `Filtering.pl [-options] Candidates.tab [BlastDB_1 ...] > FilteredCandidates.tab`
 
-###Selection
+### Selection
 `Selection.pl [-options] -n maxBaits Tree Candidates > TiledBaits.fna`
 
