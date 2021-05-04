@@ -40,7 +40,7 @@ This version requires
 4. `g++ -fopenmp src/sabond.cpp -o sa_bond`
 5. Return to root of master directory
 6. `bin/Config.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
-  * Simply running `bin/Configure.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
+  * Simply running `bin/Config.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
 
 
 ## Quick Running the pipeline
