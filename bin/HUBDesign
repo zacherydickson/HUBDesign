@@ -436,10 +436,10 @@ sub uniqPrefix(@){
 sub RunPhase($){
     my $phase = shift;
     my @FileTypes = NamePhaseFiles($phase);
-    return if(CheckForSkip($phase,@FileTypes));
+    return if(CheckForSkip($phase,0,@FileTypes));
     my $cmd = GetPhaseCmd($phase);
     $Logger->Log("Running $phase...\n\t$cmd","INFO");
-    unless(system($cmd) == 0 and !CheckForSkip($phase,@FileTypes)){
+    unless(system($cmd) == 0 and CheckForSkip($phase,1,@FileTypes)){
         unless(exists $opts{keep} or $phase eq "Clustering" or ref($WorkingDir) ne "File::Temp"){
             $WorkingDir->unlink_on_destroy(0);
             $Logger->Log("Intermediate files saved for inspection","WARNING");
@@ -542,8 +542,8 @@ sub GetPhaseCmd($){
     return join(" ",($cmd, @optstr, $flagstr, @inputs ,">", $outfile));
 }
 
-sub CheckForSkip($@){
-    my ($phase,@typeList) = @_;
+sub CheckForSkip($$@){
+    my ($phase,$bQuiet,@typeList) = @_;
     my $bSkip = 1;
     foreach my $type (@typeList){
         if(exists $opts{force} or !-e $FileDict{$type} or -z $FileDict{$type}){
@@ -551,7 +551,7 @@ sub CheckForSkip($@){
             last;
         }
     }
-    if($bSkip){
+    if($bSkip and !$bQuiet){
         $Logger->Log("Found output files from previous $phase run: Skipping $phase", "INFO");
     }
     return $bSkip;
