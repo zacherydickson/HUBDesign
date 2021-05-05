@@ -112,10 +112,12 @@ if($params{'LCR Filter'} eq "OFF"){
 }
 $params{'BlastDB Count'} = scalar(@BlastDBList);
 
+
+$Logger->LogParameters(map {($_, $params{$_})} (sort keys %params));
+
 #============================================================
 #Main
 
-    $Logger->LogParameters(%params);
     my %BaitRegionDict = LoadBaitRegions($FileDict{BRInfo});
     unless($opts{L}){
         $FileDict{Fasta_CBR} = OutputFasta(\%BaitRegionDict,"CBR");

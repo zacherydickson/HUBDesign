@@ -26,7 +26,7 @@ sub uniqPrefix(@);              #Usage: my @prefixes = uniqPrefix(@strings);
 
 sub RunPhase($);	        #Usage: RunPhase($phase);
 sub GetPhaseCmd($);	        #Usage: my $cmd = GetPhaseCmd($phase);
-sub CheckForSkip($@);           #Usage: my $bSkip = CheckForSkip($phase,@fileTypes);
+sub CheckForSkip($$@);           #Usage: my $bSkip = CheckForSkip($phase,$bQuiet,@fileTypes);
 
 sub ParseConfig($);	        #Usage: ParseConfig($configFile);
 
@@ -250,7 +250,7 @@ sub ConstructOptions(){
     'hsp-identity' => OPTINFO->new(def => 75, type => 'f', min => 0, max => 100, cat => 'Filtering', msg => "Hits with lower percent identity are ignored"),
     'hsp-length' => OPTINFO->new(def => 20, type => 'i', min => 0, cat => 'Filtering', msg => "Shorter lengths are ignored"),
     #    'extra-blast-options' => OPTINFO->new(type => 's', cat => 'Filtering', msg => "string of flags to pass to blast; cannont contain: task, db, query, evalue, outfmt, dust"),
-    'tiling-density' => OPTINFO->new(def => 10, type => 'i', min => 1, cat => 'Selection', msg => "The min desired coverage for a target locus"),
+    'tiling-density' => OPTINFO->new(def => 5, type => 'i', min => 1, cat => 'Selection', msg => "The min desired coverage for a target locus"),
     'disable-probe-balancing' => OPTINFO->new(cat => 'Selection', msg => "Prevents attempts to ensure all genomes are evenly targeted by the probeset, instead finding a constant tiling density which generates the desired number of probes"),
     'threads' => OPTINFO->new(def => 0, type => 'i', min => 0, cat => 'General', msg => "The max numer of threads to use, 0 -> system max"),
     'output-dir' => OPTINFO->new(def => 'HUBDesign_XXXX', type => 's', cat => 'General', msg => 'Directory for output files'),
@@ -440,11 +440,13 @@ sub RunPhase($){
     my $cmd = GetPhaseCmd($phase);
     $Logger->Log("Running $phase...\n\t$cmd","INFO");
     unless(system($cmd) == 0 and CheckForSkip($phase,1,@FileTypes)){
+        my $message = "$?";
         unless(exists $opts{keep} or $phase eq "Clustering" or ref($WorkingDir) ne "File::Temp"){
             $WorkingDir->unlink_on_destroy(0);
             $Logger->Log("Intermediate files saved for inspection","WARNING");
         }
-        $Logger->Log("Error during $phase: $?","ERROR");
+        $message = "Missing output files" if($message == 0);
+        $Logger->Log("Error during $phase: $message","ERROR");
     }
 }
 
@@ -539,14 +541,14 @@ sub GetPhaseCmd($){
         $flagstr .= $opt if($opt =~ s/_//);
     }
     $flagstr = "-$flagstr" unless($flagstr eq "");
-    return join(" ",($cmd, @optstr, $flagstr, @inputs ,">", $outfile));
+    return join(" ",($cmd, @optstr, $flagstr, @inputs ,">|", $outfile));
 }
 
 sub CheckForSkip($$@){
     my ($phase,$bQuiet,@typeList) = @_;
     my $bSkip = 1;
     foreach my $type (@typeList){
-        if(exists $opts{force} or !-e $FileDict{$type} or -z $FileDict{$type}){
+        if((!$bQuiet and exists $opts{force}) or !-e $FileDict{$type} or -z $FileDict{$type}){
             $bSkip = 0;
             last;
         }

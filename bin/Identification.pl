@@ -192,7 +192,7 @@ sub LogParameters(){
         $params{"T_m Range"} = "$min - $max";
     }
     $params{"Keep Files"} = $opts{k} ? "TRUE" : "FALSE";
-    $Logger->LogParameters(%params);
+    $Logger->LogParameters(map {($_, $params{$_})} (sort keys %params));
 }
 
 # Reads a cluster assignment file and retains clusters with sufficient penetration

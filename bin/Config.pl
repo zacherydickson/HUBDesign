@@ -117,7 +117,7 @@ my $config =
 "evalue	10\n".
 "hsp-identity	75\n".
 "hsp-length	20\n".
-"tiling-density	10\n".
+"tiling-density	5\n".
 "#A value of zero for threads indicates an attempt to use the system maximum threads will be made, failing that only 1 thread will be used\n".
 "threads	0\n".
 "\n".
@@ -131,6 +131,6 @@ my $config =
 "#The minimum number of baits per org to shoot for during selection\n".
 "baits-per-org-min	30\n".
 "#When no probe-count is provided the number of genomes is multiplied by this value to determine the default upper limit on probe- set size\n".
-"genome-mult	100\n";
+"genome-mult	250\n";
 
 print $config;

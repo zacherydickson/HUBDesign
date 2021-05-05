@@ -171,7 +171,7 @@ my %params = (  maxBaitsPerOrg => ($maxBaitsPerOrg) ? $maxBaitsPerOrg : "∞",
                 BaitInfoFile => $FileDict{BaitInfo},
                 TreeFile => $FileDict{Tree});
 @params{qw(maxBaitsPerOrg maxRegPerOrg)} = ("Auto-Detect") x 2 if(exists $opts{a});
-$Logger->LogParameters(%params);
+$Logger->LogParameters(map {($_,$params{$_})} (sort keys %params));
 
 #============================================================
 #Main
@@ -579,7 +579,7 @@ sub DetermineTilingClass(){
     while(!$bDone){
         $bDone = 1;
         if(!$nMedClass){
-            $Logger->Log("No Med Class Organisms: All orgs at either minimum or maximum tiling","WARNING");
+            $Logger->Log("No Med Class Organisms: All orgs at either minimum or maximum tiling; maxBaits may be too low, or minDensity too high","WARNING");
             last;
         }
         $Ideal = $MedClassBaits / $nMedClass;
@@ -1001,6 +1001,7 @@ sub OptimizeMaxRegionsPerOrg(){
         }
         $Logger->Log("Optimization Iteration @{[$i+1]}: Max @ $maxRegPerOrg","DEBUG");
     }
+    $maxRegPerOrg = 1 if($maxRegPerOrg < 1);
     $Logger->Log("Found optimum at $maxRegPerOrg regions per organism","INFO");
 }
 

@@ -26,7 +26,6 @@ This version requires
 ## Outputs
 * A fasta formated set of probe sequences
 * A tab delimited file describing the source and position of the the probe sequences
-
 * A tab delimited file detailing the composition of gene clusters
 * A fasta formated set of cluster sequences
 * A file containing a newick formatted tree describing the relationship between taxa
@@ -36,26 +35,53 @@ This version requires
 
 1. Download the repository
 2. Navigate into the master directory
-3. Navigate into the SA_BOND directory
-4. `g++ -fopenmp src/sabond.cpp -o sa_bond`
-5. Return to root of master directory
-6. `bin/Config.pl -a multiple-sequence-aligner-of-choice -l lcr-masker-of-choice > HUBDesign.cfg`
-  * Simply running `bin/Config.pl > HUBDesign.cfg` will configure HUBDesign for mafft and dustmasker
+3. Alter the ALN and LCR variables in the Makefile if you wish to use non-default dependencies
+4. Run `make`
 
-
-## Quick Running the pipeline
+## Quick Guide
 
 Given that you have a tab delimited file with columns of paths-to-annotated-genome and taxon-id
 The pipeline can be run with 
 `bin/HUBDesign GenomeInfo.tab`
 
-A tree informing the relationships between genomes can be provided with the --guide-tree option
+Further options for the pipeline are detailed with the --help option 
+`bin/HUBDesign --help`
 
-Blast databases of blacklist sequences can be provided with the --blast-db option either with multiple
+## Optional inputs
+
+* `--guide-tree` 
+A tree which can be used to guide how the nested relationships between the input genomes. 
+By default the heirarchy is determined by the co-occurence of clusters between taxa.
+
+* `--blast-db` 
+Blast databases of blacklist sequences can be provided with the option either with multiple
 uses of the flag or with a comma separated list
 
-Further options for the pipeline are detailed with the --help option
-`bin/HUBDesign --help`
+* `--probe-count` 
+The maximum size of the output probeset. By default the maximum number of probes will be a multiple of
+the number of input genomes
+
+* `--probe-length`  
+The length of probes to design
+
+
+### Common Parameters
+
+* `--r2t-divergence` 
+The maximum amount of divergence within a cluster. As more divergent baits are less effective, selecting
+an appropriate value here allows for breadth of coverage while maintaining specificity
+
+* `--penetrance`
+The minimum proportion of a node's decendants which have a particular gene for that gene to be included
+in the pseudo-genome for that node. High values potentially allow for non-identifying horizontally transferred elements, while low values eliminate many regions from consideration for cross-reactivity reducing specificity of the the final probe set.
+
+* `--tiling-density`
+The minimum tiling density to aim for during probe selection. Higher tiling density results in more
+effective capture of targets, but setting the target too high can make it impossible to balance the
+number of baits across organisms. This can cause unexpectedly-small probe sets
+
+
+### Configuration
 
 Altering the HUBDesign.cfg, or providing a different config file will change the default parameters of the pipeline for ease of use with multiple profiles
 
@@ -71,10 +97,10 @@ A directory of test files is provided in the repository:
 * The Guide.tree file was generated from the lineages provided in NCBI's taxonomy for 56 refseq
   coronavirus genomes
 
-The following will generate a directory with all final and most intermediate files HUBDesign produces: 
-`bin/HUBDesign --output-dir HUBDESIGN_test --verbose --keep test/GenomeInfo.tab 2>test.log` 
+The following will generate a directory with all final and most intermediate files HUBDesign produces:  
+`bin/HUBDesign --guide-tree test/Guide.tree --tiling-density 1 --probe-count 2500 --output-dir test --verbose --keep test/GenomeInfo.tab 2>test.log` 
 
-The output of this command can be compared to the data provided in the test directory
+The output of this command can be compared to the output provided in the test directory
 
 ## Advanced pipeline use
 
