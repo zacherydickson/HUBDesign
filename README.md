@@ -24,10 +24,10 @@ This version requires
 * BLASTn version 2.9.1+
 
 ## Outputs
-* A fasta formated set of probe sequences
-* A tab delimited file describing the source and position of the the probe sequences
+* A fasta formatted set of probe sequences
+* A tab delimited file describing the source and position of the probe sequences
 * A tab delimited file detailing the composition of gene clusters
-* A fasta formated set of cluster sequences
+* A fasta formatted set of cluster sequences
 * A file containing a newick formatted tree describing the relationship between taxa
 
 
@@ -51,14 +51,14 @@ Further options for the pipeline are detailed with the --help option
 
 * `--guide-tree` 
 A tree which can be used to guide how the nested relationships between the input genomes. 
-By default the heirarchy is determined by the co-occurence of clusters between taxa.
+By default the hierarchy is determined by the co-occurrence of clusters between taxa.
 
 * `--blast-db` 
 Blast databases of blacklist sequences can be provided with the option either with multiple
 uses of the flag or with a comma separated list
 
 * `--probe-count` 
-The maximum size of the output probeset. By default the maximum number of probes will be a multiple of
+The maximum size of the output probe set. By default the maximum number of probes will be a multiple of
 the number of input genomes
 
 * `--probe-length`  
@@ -72,8 +72,8 @@ The maximum amount of divergence within a cluster. As more divergent baits are l
 an appropriate value here allows for breadth of coverage while maintaining specificity
 
 * `--penetrance`
-The minimum proportion of a node's decendants which have a particular gene for that gene to be included
-in the pseudo-genome for that node. High values potentially allow for non-identifying horizontally transferred elements, while low values eliminate many regions from consideration for cross-reactivity reducing specificity of the the final probe set.
+The minimum proportion of a node's descendants which have a particular gene for that gene to be included
+in the pseudo-genome for that node. High values potentially allow for non-identifying horizontally transferred elements, while low values eliminate many regions from consideration for cross-reactivity reducing specificity of the final probe set.
 
 * `--tiling-density`
 The minimum tiling density to aim for during probe selection. Higher tiling density results in more
@@ -85,7 +85,7 @@ number of baits across organisms. This can cause unexpectedly-small probe sets
 
 Altering the HUBDesign.cfg, or providing a different config file will change the default parameters of the pipeline for ease of use with multiple profiles
 
-The foollowing can be used to generate config files for editing
+The following can be used to generate config files for editing
 `bin/Config.pl`
 
 ## Tutorial
@@ -104,7 +104,7 @@ The output of this command can be compared to the output provided in the test di
 
 ## Advanced pipeline use
 
-The individaul phases of the pipeline can be run separately, which is useful if you would like to do
+The individual phases of the pipeline can be run separately, which is useful if you would like to do
 additional processing at any given step. (Ex. Filtering against NCBI's non-redundant nucleotide database for non-viral hits) 
 As long as formats are preserved between steps this is relatively painless
 

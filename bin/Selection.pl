@@ -189,7 +189,7 @@ if($maxBaits && $AbsMaxBaits > $maxBaits){
         $Logger->Log("Determining Maximal Constant Tiling Density","INFO");
         my $density = $minDensity;
         $density++ while(GetBaitCount($density+1,(values %RegionOrder)) <= $maxBaits);
-        foreach my $regID (keys %BaitRegionInfo){
+        foreach my $regID (sort keys %BaitRegionInfo){
             my $min = $BaitRegionInfo{$regID}->TDn->min;
             my $max = $BaitRegionInfo{$regID}->TDn->max;
             my $tgt = ($density < $min) ? $min : $density;
@@ -348,7 +348,8 @@ sub GetSortedRegions() {
     my $OrgCounter = 0;
     my $OrgCount = scalar(keys %RegOrder);
     my $LastTime = time;
-    while (my ($org,$idListRef) = each %RegOrder){
+    foreach my $org (sort keys %RegOrder){
+        my $idListRef = $RegOrder{$org};
         my $elapsed = time - $LastTime;
         $OrgCounter++;
         if($elapsed > 10){
@@ -441,7 +442,7 @@ sub GetBaitCount($@){
     my %UniqRegID;
     @UniqRegID{@{$_}} = (1) x @{$_} foreach(@_);
     my $count = 0;
-    foreach my $regID (keys %UniqRegID){
+    foreach my $regID (sort keys %UniqRegID){
         my $density = GetRegionDensityByMode($densMode,$regID); 
         $count += CalculateNumBaits($BaitRegionInfo{$regID}->Len,$density,$regID);
     }
@@ -530,7 +531,7 @@ sub ApplyMaxRegionFilter(\%;$){
         }
     }
     my %UniqRegID;
-    @UniqRegID{@{$_}} = (1) x @{$_} foreach((values %RegionOrder));
+    @UniqRegID{@{$_}} = (1) x @{$_} foreach(sort (values %RegionOrder));
     $Logger->Log("Filtered out @{[scalar(keys %BaitRegionInfo) - scalar(keys %UniqRegID)]} Regions",$loglevel);
 }
 
@@ -543,7 +544,7 @@ sub OutputBaits(@){
     @UniqRegID{@{$_}} = (1) x @{$_} foreach(@_);
     my $OUT = Bio::SeqIO->newFh(-format => "fasta");
     my $nextid = 0;
-    foreach my $regID (keys %UniqRegID){
+    foreach my $regID (sort keys %UniqRegID){
         my $density = (defined $BaitRegionInfo{$regID}->TDn->tgt) ? $BaitRegionInfo{$regID}->TDn->tgt : $BaitRegionInfo{$regID}->TDn->max;
         my $regLen = $BaitRegionInfo{$regID}->Len;
         my $spacing = CalculateSpacing($regLen,$density);
@@ -567,7 +568,7 @@ sub DetermineTilingClass(){
     $Logger->Log("DetermineTilingClass","DEBUG");
     my $nOrg = scalar(keys %RegionOrder);
     my %UniqRegID;
-    @UniqRegID{@{$_}} = (1) x @{$_} foreach((values %RegionOrder));
+    @UniqRegID{@{$_}} = (1) x @{$_} foreach(sort (values %RegionOrder));
     my $bDone = 0;
     my $MedClassBaits = $maxBaits;
     my @OrgList = sort keys %RegionOrder;
@@ -617,7 +618,7 @@ sub DetermineTilingClass(){
                 $bDone = 0;
             }
         }
-        foreach my $regID ((keys %MinRegions, keys %MaxRegions)){
+        foreach my $regID ((sort keys %MinRegions, sort keys %MaxRegions)){
             my $density = (exists $MinRegions{$regID}) ? $BaitRegionInfo{$regID}->TDn->min : $BaitRegionInfo{$regID}->TDn->max;
             $MedClassBaits -= CalculateNumBaits($BaitRegionInfo{$regID}->Len,$density,$regID);
         }
@@ -754,7 +755,7 @@ sub ApplyMaxBaitPerOrgFilter(;$){
     my %BaitCountsPerOrg = GetBaitCountsPerOrg();
     my %nTrimPerOrg;
     my $sumCount = 0;
-    foreach my $org (keys %BaitCountsPerOrg){
+    foreach my $org (sort keys %BaitCountsPerOrg){
         $nTrimPerOrg{$org}=0;
         my $count = $BaitCountsPerOrg{$org}->{max};
         $sumCount += $count;
@@ -775,7 +776,7 @@ sub TrimBaits($$){
     while(!$bCycle and $remaining > 0){ #Repeat until the desired number of baits have been removed or no more baits can be removed
         $bCycle = 1;
         my %BaitCountsPerOrg = GetBaitCountsPerOrg();
-        $BaitCountsPerOrg{$_} = $BaitCountsPerOrg{$_}->{lc($densMode)} foreach(keys %BaitCountsPerOrg);
+        $BaitCountsPerOrg{$_} = $BaitCountsPerOrg{$_}->{lc($densMode)} foreach(sort keys %BaitCountsPerOrg);
         my @Orgs = sort {$BaitCountsPerOrg{$b} <=> $BaitCountsPerOrg{$a}} (keys %BaitCountsPerOrg);
         my %nTrimPerOrg;
         @nTrimPerOrg{@Orgs} = (0) x @Orgs;
@@ -808,7 +809,7 @@ sub TrimBaits($$){
             }
         }
         my %Val = (max => -1, min => 99**99, sum => 0);
-        foreach my $org (keys %nTrimPerOrg){
+        foreach my $org (sort keys %nTrimPerOrg){
             $Val{sum} += $nTrimPerOrg{$org};
             $Val{max} = $nTrimPerOrg{$org} if($Val{max} < $nTrimPerOrg{$org});
             $Val{min} = $nTrimPerOrg{$org} if($Val{min} > $nTrimPerOrg{$org});
@@ -836,7 +837,7 @@ sub TrimBaitsFromOrganisms($$%){
     unless(defined $trimCap){
         $bTrimCap = 0;
         $trimCap = 0;
-        $trimCap += $nBaitsPerOrg{$_} foreach(keys %nBaitsPerOrg);
+        $trimCap += $nBaitsPerOrg{$_} foreach(sort keys %nBaitsPerOrg);
     }
     my %UntrimmableRegions;
     my $TotalTrimmed = 0;
@@ -939,7 +940,7 @@ sub OptimizeMaxBaitsPerOrg(){
         $nMinClass = 0;
         my (undef,%OrgTilingClass) = DetermineTilingClass();
         my %BaitCountPerOrg = GetBaitCountsPerOrg();
-        $BaitCountPerOrg{$_} = $BaitCountPerOrg{$_}->{max} foreach(keys %BaitCountPerOrg);
+        $BaitCountPerOrg{$_} = $BaitCountPerOrg{$_}->{max} foreach(sort keys %BaitCountPerOrg);
         my $MaxMid = 0;
 
         my %MinOrgSet;
