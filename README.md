@@ -14,6 +14,7 @@ attempting to balance the number of baits per genome.
 This version requires
 * Perl version 5.10.0+
 * BioPerl 1.7.10+
+* Parallel::ForkManager 2.0.0+
 * A multiple sequence aligner, the following are supported by default:
   * MAFFT version 7.0+
   * MUSCLE version 3.8.425+

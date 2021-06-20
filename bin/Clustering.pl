@@ -5,7 +5,7 @@ use File::Basename;
 use Bio::SeqIO;
 use Bio::AlignIO;
 use Bio::LocatableSeq;
-use Bio::Align::DNAStatistics;
+#use Bio::Align::DNAStatistics;
 use Bio::Tree::DistanceFactory;
 use Bio::TreeIO;
 use Getopt::Std;
@@ -15,6 +15,7 @@ use FindBin;
 use File::Spec;
 use lib File::Spec->catdir($FindBin::RealBin, '..', 'lib');
 use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
+use Bio::Align::ParallelDNAStatistics;
 
 
 #============================================================
@@ -72,7 +73,7 @@ if(@ARGV < 1 or exists $opts{h}){
             "\t\tNote: If -l is specified, then no command line GFF's need to be specified\n".
             "-p INT\tTranslation Table to use (Default: $DEFAULT{p})\n".
             "-o PATH\t The file to which cluster info will be written (Default: $DEFAULT{o})\n".
-            "-t STR\tA string acting as a flag for the external aligner for the number of threads (Default: $DEFAULT{t})\n".
+            "-t STR\tMaximum number of threads, 0 is sys_max (Default: $DEFAULT{t})\n".
             "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
             "-v\tVerbose Output\n".
@@ -110,7 +111,6 @@ $ALIGNER =~ s/\{threads\}/$opts{t}/;
 #Handle Verbosity
 $opts{v} = 1 if (exists $opts{V});
 
-
 #============================================================
 #Main Script
 
@@ -123,6 +123,16 @@ my %GeneInfo = LoadGeneInfo(LoadGFFSet($opts{l},@ARGV));
 printf STDERR "Gene families Loaded:\t%d\n",scalar(keys %GeneInfo) if(exists $opts{v});
 my $nSinglets = HandleSinglets(\%GeneInfo,$clustHandle,$SeqOObj);
 printf STDERR "Single member gene families:\t%d\n",$nSinglets if(exists $opts{v});
+
+#Global Declaration of BioPerl Objects for Clustering
+my $dfactory = Bio::Tree::DistanceFactory->new(-method => 'NJ');
+my $statObj;
+if($opts{t} == 1){
+    $statObj = Bio::Align::DNAStatistics->new();
+} else {
+    $statObj = Bio::Align::ParallelDNAStatistics->new(-threads => $opts{t});
+}
+
 foreach my $geneName (keys %GeneInfo){
     printf STDERR "Processing gene family %s...\n",$geneName if(exists $opts{v});
     my $seqListRef = $GeneInfo{$geneName};
@@ -328,9 +338,7 @@ sub AlignByProt($$){
 #Output: a Bio::Tree Object
 sub ConstructTree($$){
     my ($alnObj,$geneName) = @_;
-    my $dfactory = Bio::Tree::DistanceFactory->new(-method => 'NJ');
-    my $stats = Bio::Align::DNAStatistics->new;
-    my $matObj = $stats->distance(-method => "Uncorrected", -align => $alnObj);
+    my $matObj = $statObj->distance(-method => "Uncorrected", -align => $alnObj);
     my $treeObj = $dfactory->make_tree($matObj);
     ReRootTree($treeObj);
     return $treeObj;

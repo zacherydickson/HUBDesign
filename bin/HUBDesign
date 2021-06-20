@@ -484,31 +484,31 @@ sub GetPhaseCmd($){
     #An array reference value indicates that the first key in the list which exists in %opts will be used
     if($phase eq 'Clustering') {
         %options = (_l => $FileDict{GenomeInfo}, d => 'r2t-divergence', p => 'translation-table',
-            _o => $FileDict{ClustInfo}, t => 'threads');
+            _o => $FileDict{ClustInfo}, t => 'threads', C => 'config');
         %flags = (v => 'verbose');
         $outfile = $FileDict{ClustSeq}
     } elsif($phase eq 'Assignment') {
         %options = (_g => $FileDict{GuideTree}, _G => $FileDict{GuideDend}, w => 'weight-guide-tree',
-            t => 'threads');
+            t => 'threads', C => 'config');
         %flags = (v => 'verbose');
         @inputs = ($FileDict{ClustInfo});
         $outfile = $FileDict{Assignment}
     } elsif($phase eq 'Identification') {
         %options = (_d => $WorkingDir, g => 'gc-interval', i => 'similarity', l => 'length',
             m => ['tm-interval', 'tm-range'], n => 'candidate-pool', p => 'penetrance',
-            r => 'contiguity', t => 'threads');
+            r => 'contiguity', t => 'threads', C => 'config');
         %flags = (k => 'keep', v => 'verbose');
         @inputs = @FileDict{qw(Assignment ClustSeq)};
         $outfile = $FileDict{Candidates}
     } elsif($phase eq 'Filtering') {
         %options = (_d => $WorkingDir, e => 'evalue', f => 'lcr-window', g => 'lcr-threshold',
-            i => 'hsp-identity', l => 'length', m => 'hsp-length', t => 'threads');
+            i => 'hsp-identity', l => 'length', m => 'hsp-length', t => 'threads', C => 'config');
         %flags = (k => 'keep', v => 'verbose', L => 'disable-lcr-filter');
         @inputs= ($FileDict{Candidates},@{$blastDBListRef});
         $outfile = $FileDict{Filtered};
     } elsif($phase eq 'Selection') {
         %options = (n => 'probe-count', d => 'tiling-density', _i => $FileDict{BaitInfo},
-            l => 'length');
+            l => 'length', C => 'config');
         %flags = (v => 'verbose', P => 'disable-probe-balancing');
         unless(exists $opts{'disable-probe-balancing'}){
             $flags{_a} = 1;
