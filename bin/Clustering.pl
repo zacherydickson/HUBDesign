@@ -119,6 +119,7 @@ open (my $clustHandle, ">$opts{o}") or die "Could not write to $opts{o}: $!\n";
 print $clustHandle join("\t",qw(ClusterID TaxonID SeqID GeneID Start End Strand)),"\n";
 
 
+print STDERR "Loading Gene Info...\n" if(exists $opts{v});
 my %GeneInfo = LoadGeneInfo(LoadGFFSet($opts{l},@ARGV));
 printf STDERR "Gene families Loaded:\t%d\n",scalar(keys %GeneInfo) if(exists $opts{v});
 my $nSinglets = HandleSinglets(\%GeneInfo,$clustHandle,$SeqOObj);
@@ -192,9 +193,18 @@ sub LoadGFFSet($@){
 # %GeneInfo = (Name => [GENE, ...], ...);
 sub LoadGeneInfo(%){
     my %gffSet = @_;
+    print STDERR "|>" if(exists $opts{v});
     my %GeneInfo;
     ##Process Each GFF File
+    my $total = scalar keys %gffSet;
+    my $count = 0;
+    my $next = 1;
     while( my ($tid,$filename) = each %gffSet){
+        $count++;
+        until($next > int(($count / $total)*100)){
+            $next++;
+            print STDERR "\b=>" if (exists $opts{v});
+        }
         #Handle potentially gzipped files
         my $opencmd = $filename;
         if ($filename =~ m/\.gz$/){
@@ -203,6 +213,7 @@ sub LoadGeneInfo(%){
         if(open(my $fh, $opencmd)){
             ##Parse the portion of the GFF with gene info
             my %chrIndex; #For rapidly filling in sequence info
+            my %chrGNameSetDict; #^
             while(my $line = <$fh>){
                 last if($line =~ m/##FASTA/); #Reached Sequence info
                 next if($line =~ m/^##/); # Skip headers
@@ -212,19 +223,22 @@ sub LoadGeneInfo(%){
                 next unless($type eq "CDS");
                 my %info = split(/=|;/,$infoStr);
                 my $geneName = exists $info{Name} ? $info{Name} : "UNKNOWN";
-                ($geneName) = split(/_/,$geneName);
+                #($geneName) = split(/_/,$geneName);
                 $GeneInfo{$geneName} = [] unless(exists $GeneInfo{$geneName});
                 push(@{$GeneInfo{$geneName}},GENE->new(uid => $info{ID},start => $s,
                         end => $e, strand => $strand, seq => undef, tid => $tid, chr => $seqID));
                 my $label = join(';',($seqID,$geneName));
                 $chrIndex{$label} = [] unless(exists $chrIndex{$label});
                 push(@{$chrIndex{$label}},$#{$GeneInfo{$geneName}});
+                $chrGNameSetDict{$seqID} = {} unless(exists $chrGNameSetDict{$seqID});
+                $chrGNameSetDict{$seqID}->{$geneName} = 1;
             }
             ##Extract the Sequence Info
             my $SeqI = new Bio::SeqIO(-fh => $fh, -format => 'fasta');
             while(my $seqObj = $SeqI->next_seq){
                 my $id = $seqObj->id;
-                foreach my $geneName (keys %GeneInfo){
+                next unless(exists $chrGNameSetDict{$id});
+                foreach my $geneName (keys %{$chrGNameSetDict{$id}}){
                     my $label = join(';',($id,$geneName));
                     next unless(exists $chrIndex{$label});
                     foreach my $index (@{$chrIndex{$label}}){
@@ -242,6 +256,7 @@ sub LoadGeneInfo(%){
             warn "Could not open $filename: $!\n";
         }
     }
+    print STDERR "\b=|\n" if (exists $opts{v});
     return %GeneInfo;
 }
 
