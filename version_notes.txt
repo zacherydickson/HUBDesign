@@ -1,0 +1,9 @@
+V1.1.2
+Fixed a bug during Assignment where a cluster composed of genes only from one organism was treated as an internal node rather than a leaf node in the species tree 
+Added time stamps to the start and end of logs for Assignment
+Added maximum candidates per probe to parameter logging for Identification
+Removed buffering of SA_BOND log information for systems with stdbuf
+Fixed a bug where specifying a maximum number of candidates per taxon caused a segmentation fault in SA_BOND
+Added sepsis probe sequences
+V1.1.1
+Parallelized the calculation of distances for the construction of gene trees during clustering

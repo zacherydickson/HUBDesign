@@ -1576,6 +1576,8 @@ unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned ch
 	olig_total = 0;
 	chunk = (geneno < MAX_NUM_THREAD) ? 1 : geneno / MAX_NUM_THREAD;
 
+        //printf("PreSearch\n");
+
 	if (MAX_NUM_THREAD >= geneno)	
 	    omp_set_num_threads(geneno);
 	else 
@@ -1616,9 +1618,9 @@ unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned ch
                 }
 		if (bestPlace != -1){
 		    canPlace = (tilingLen == OLIG_LENGTH) ? bestPlace - bestZero/2 : bestPlace;
-                    if(lastPlace == canPlace){
-                        printf("cp: %ld\n",canPlace);
-                    }
+                    //if(lastPlace == canPlace){
+                    //    printf("cp: %ld\n",canPlace);
+                    //}
                     lastPlace = canPlace;
 		    if (secStr){
                         bool res = secondary_Structure(gCoded, canPlace);
@@ -1688,9 +1690,11 @@ unsigned long intensive_Homology(uint8_t *gCoded, uint8_t *simarray, unsigned ch
         OLIGList = (OLIGO*) malloc(olig_total * sizeof(OLIGO));
         memoryUsed += olig_total * sizeof(OLIGO);
         int curOlig = 0;
+        //printf("PreLoop\n");
         for(int i = 0; i < geneno; i++){
-            memoryUsed += geneSize[i] * sizeof(OLIGO);
+            memoryUsed += oligsperGene[i] * sizeof(OLIGO);
             for(int j = 0; j < oligsperGene[i]; j++){
+                //printf("Olig: %d, Gene: %d, OligInGene: %d\n",curOlig,i,j);
                 memcpy(&OLIGList[curOlig++],&Gene_OligList[i][j],sizeof(OLIGO));
             }
             free(Gene_OligList[i]);

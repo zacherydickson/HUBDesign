@@ -16,7 +16,7 @@ our %EXPORT_TAGS = (All => [qw(&OpenFileHandle &GetProcessorCount &ProcessNumeri
 #Input	File - Path to the file to open
 #	Type - A descriptor of the type of file being opened
 # (opt)	exit_Func - a reference to a subroutine to run if opening the file fails
-#Output	A file handle if successfule, 0 otherwise.
+#Output	A file handle if successful, 0 otherwise.
 #Note: Calling process must close the file handle
 sub OpenFileHandle($$;$){
     my ($file,$type,$level) = @_;

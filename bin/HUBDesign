@@ -30,7 +30,7 @@ sub CheckForSkip($$@);           #Usage: my $bSkip = CheckForSkip($phase,$bQuiet
 
 sub ParseConfig($);	        #Usage: ParseConfig($configFile);
 
-my $VERSION = "1.1.1";
+my $VERSION = "1.1.2";
 my $MAINTAINER = "ZacheryDickson";
 my $CITATION = "";
 

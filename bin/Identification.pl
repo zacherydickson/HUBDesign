@@ -179,9 +179,9 @@ OutputResults(\@BaitRegionList);
 
 #Outputs the Parameters to STDERR
 sub LogParameters(){
-     my @paramNames = ("Probe Length","Max Similarity","Max Run","GC Range","T_m Interval","Min Penetrance","Threads","Assignments","Clusters","Temp Directory","Keep Files");
+     my @paramNames = ("Probe Length","Max Similarity","Max Run","GC Range","T_m Interval","Max Candidates","Min Penetrance","Threads","Assignments","Clusters","Temp Directory","Keep Files");
     my %params;
-    @params{@paramNames} = ($opts{l},$opts{i},$opts{r},"$opts{g_min} - $opts{g_max}",undef,$opts{p},$opts{t},$FileDict{Assignment},$FileDict{ClustSeq},$opts{d},undef);
+    @params{@paramNames} = ($opts{l},$opts{i},$opts{r},"$opts{g_min} - $opts{g_max}",undef,$opts{n}, $opts{p},$opts{t},$FileDict{Assignment},$FileDict{ClustSeq},$opts{d},undef);
     if(exists $opts{m_range}){
         $params{"T_m Interval"} = $opts{m_range};
     } else {
@@ -293,8 +293,9 @@ sub RunBOND($){
     } else {
         $TmFlag = "-minGC $opts{m_min} -maxGC $opts{m_max}";
     }
-    my $cmd = "$_BOND_EXECUTABLE $infile $outfile -length $opts{l} -seqSim $opts{i} -maxMatch $opts{r} $TmFlag -minGC $opts{g_min} -maxGC $opts{g_max} -maxOligs $opts{n} 1>&2";
+    my $cmd = "$_BOND_EXECUTABLE $infile $outfile -length ".($opts{l}+25)." -tilingLen $opts{l} -seqSim $opts{i} -maxMatch $opts{r} $TmFlag -minGC $opts{g_min} -maxGC $opts{g_max} -maxOligs $opts{n} 1>&2";
     $Logger->Log("Running BOND with command: $cmd","INFO");
+    $cmd = "stdbuf -i0 -o0 -e0 $cmd" unless(system("stdbuf sleep 1"));
     my $result = system($cmd);
     $Logger->Log("BOND failure: $result","ERROR") unless($result == 0);
     $Logger->Log("Raw BOND output in $outfile","INFO");

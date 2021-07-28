@@ -86,6 +86,8 @@ my $max_proc = ValidateThreadCount($opts{t});
 #Main Script
 
 my $clustInfoFile = shift(@ARGV);
+my ($sec,$min,$hour) = localtime;
+printf STDERR "%02d:%02d:%02d: Loading Cluster Info...\n",$hour,$min,$sec if(exists $opts{v});
 my @clusterList = LoadClusterInfo($clustInfoFile);
 printf STDERR "Clusters: %d\n", scalar(@clusterList) if(exists $opts{v});
 print STDERR "\tConstructing dendrogram...\n" if(exists $opts{v});
@@ -97,7 +99,8 @@ print join("\t",qw(ClusterID TaxonID Penetrance)),"\n";
 foreach my $clustObj (@clusterList){
     print join("\t",($clustObj->uid,$clustObj->assignment,sprintf("%.2f",$clustObj->penetrance))),"\n";
 }
-print STDERR "Done\n" if(exists $opts{v});
+($sec,$min,$hour) = localtime;
+printf STDERR "%02d:%02d:%02d: Done\n",$hour,$min,$sec if(exists $opts{v});
 
 
 #============================================================
@@ -321,7 +324,7 @@ sub AssignTaxa($$){
         my %Results;
         for(my $i = $blockStart; $i <= $blockEnd; $i++){
             my $clustObj = $clustListRef->[$i];
-            my @txidList = sort unique(@{$clustObj->members});
+            my @txidList = sort (unique(@{$clustObj->members}));
             my $txidKey = join(";",@txidList);
             my $lcaID = $txidList[0];
             my $penetrance = 100;
@@ -334,8 +337,12 @@ sub AssignTaxa($$){
                 if(@nodeList >= 2){
                     my $lcaNode = $dendObj->get_lca(-nodes => \@nodeList);
                     $lcaID = $lcaNode->id;
-                    my @leafList = get_leaf_descendents($lcaNode);
-                    $leafCount = scalar(@leafList);
+                    if($lcaNode->is_Leaf){
+                        warn "[WARNING] LCA ($lcaID) for ".scalar(@nodeList)." nodes (".join(",",@txidList).") found to be a leaf\n";
+                    } else {
+                        my @leafList = get_leaf_descendents($lcaNode);
+                        $leafCount = scalar(@leafList);
+                    }
                     $penetrance = @nodeList/$leafCount*100
                 }
             }

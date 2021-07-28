@@ -223,7 +223,7 @@ sub LoadGeneInfo(%){
                 next unless($type eq "CDS");
                 my %info = split(/=|;/,$infoStr);
                 my $geneName = exists $info{Name} ? $info{Name} : "UNKNOWN";
-                #($geneName) = split(/_/,$geneName);
+                ($geneName) = split(/_/,$geneName);
                 $GeneInfo{$geneName} = [] unless(exists $GeneInfo{$geneName});
                 push(@{$GeneInfo{$geneName}},GENE->new(uid => $info{ID},start => $s,
                         end => $e, strand => $strand, seq => undef, tid => $tid, chr => $seqID));
