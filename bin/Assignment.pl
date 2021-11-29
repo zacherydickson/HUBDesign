@@ -161,6 +161,7 @@ sub CountGroupings($@){
     foreach my $clustObj (@clusterList){
         @taxaSet{@{$clustObj->members}} = (1) x scalar(@{$clustObj->members});
     }
+    $taxaSet{'OUTGROUP'} = 1;
     @taxaSet{keys %taxaSet} = (1 .. scalar(keys %taxaSet)); #Assign a unique value to each taxa
     my @groupingList;
     my %GroupingIndex; #Tracks which element of the list a particular grouping is
@@ -298,8 +299,13 @@ sub ConstructDendrogram(\@\@){
         }
     }
     my $dendObj = Bio::Tree::Tree->new(-root => $nodeList[0]);
+    my ($outgrpnode) = $dendObj->find_node(-id => 'OUTGROUP');
+    $outgrpnode->id(sprintf("IN_%0*d",$_ID_PADDING,0));
+    $dendObj->reroot($outgrpnode);
+    $dendObj->splice($nodeList[0]);
+    $dendObj->splice($outgrpnode->each_Descendent);
     ##Ensure all nodes in the tree have an id
-    my $nextID = 0;
+    my $nextID = 1;
     foreach my $node ($dendObj->get_nodes){
         next if(defined $node->id);
         $node->id(sprintf("IN_%0*d",$_ID_PADDING,$nextID++));

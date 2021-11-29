@@ -1,3 +1,5 @@
+V1.2.2
+Improved rooting of dendrogram used in Assignment
 V1.2.1
 Changed Assignment dendrogram construction method from a dissimilarity-measure-based agglomerative clustering to a consensus tree method using each cluster as a tree with an observed grouping and an implied grouping of all other taxa. In addition to improved runtime and tree properties, this removes a bug where taxon ids longer than 12 characters would incorrectly cluster together when constructing the dendrogram for cluster assignment
 Updated Assignment Logging to be consistent with other parts of the pipeline
