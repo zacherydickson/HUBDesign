@@ -160,7 +160,7 @@ my %FileDict;
 @FileDict{qw(Assignment ClustSeq)} = @ARGV[0 .. 1];
 
 while( my ($type,$file) = each %FileDict){
-    $Logger->Log("$type file ($file) does not exists","ERROR") unless (-e $file);
+    $Logger->Log("$type file ($file) does not exist","ERROR") unless (-e $file);
 }
 
 #============================================================
@@ -295,7 +295,7 @@ sub RunBOND($){
     }
     my $cmd = "$_BOND_EXECUTABLE $infile $outfile -length ".($opts{l}+25)." -tilingLen $opts{l} -seqSim $opts{i} -maxMatch $opts{r} $TmFlag -minGC $opts{g_min} -maxGC $opts{g_max} -maxOligs $opts{n} 1>&2";
     $Logger->Log("Running BOND with command: $cmd","INFO");
-    $cmd = "stdbuf -i0 -o0 -e0 $cmd" unless(system("stdbuf sleep 1"));
+    $cmd = "stdbuf -i0 -o0 -e0 $cmd" unless(system("stdbuf -e0 sleep 1"));
     my $result = system($cmd);
     $Logger->Log("BOND failure: $result","ERROR") unless($result == 0);
     $Logger->Log("Raw BOND output in $outfile","INFO");

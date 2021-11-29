@@ -19,7 +19,7 @@ sub new(){
     delete $args{pos};
     $self->{'BaitRegion::seq'} = $args{seq} if(exists $args{seq});
     delete $args{seq};
-    carp("Unknown paramters to BaitRegion::new") if(scalar(keys %args));
+    carp("Unknown parameters to BaitRegion::new") if(scalar(keys %args));
     bless $self => $package;
     return $self;
 }

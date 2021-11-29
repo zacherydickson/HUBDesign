@@ -1,3 +1,10 @@
+V1.2.1
+Changed Assignment dendrogram construction method from a dissimilarity-measure-based agglomerative clustering to a consensus tree method using each cluster as a tree with an observed grouping and an implied grouping of all other taxa. In addition to improved runtime and tree properties, this removes a bug where taxon ids longer than 12 characters would incorrectly cluster together when constructing the dendrogram for cluster assignment
+Updated Assignment Logging to be consistent with other parts of the pipeline
+Minor spelling Errors throughout
+Updated default mafft configuration to specify amino acid sequences during gene clustering, to prevent failure when mafft misidentifies the input sequence type
+Changed tree construction to UPGMA instead of neighbour joining, prevent multifurcation
+Fixed a bug in detecting whether a system has stdbuf
 V1.1.2
 Fixed a bug during Assignment where a cluster composed of genes only from one organism was treated as an internal node rather than a leaf node in the species tree 
 Added time stamps to the start and end of logs for Assignment

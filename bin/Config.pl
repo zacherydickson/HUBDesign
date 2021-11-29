@@ -34,7 +34,7 @@ unless($algn_exec){
 
 my $aligner_cmd = "--thread {threads} -in {input}";
 if($opts{a} eq 'mafft'){
-    $aligner_cmd = "--auto --localpair --quiet --thread {threads} {input}";
+    $aligner_cmd = "--auto --amino --localpair --quiet --thread {threads} {input}";
 } elsif($opts{a} eq 'muscle'){
     $aligner_cmd = "-quiet -in {input}";
 } elsif($opts{a} eq 'clustalo'){

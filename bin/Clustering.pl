@@ -126,7 +126,7 @@ my $nSinglets = HandleSinglets(\%GeneInfo,$clustHandle,$SeqOObj);
 printf STDERR "Single member gene families:\t%d\n",$nSinglets if(exists $opts{v});
 
 #Global Declaration of BioPerl Objects for Clustering
-my $dfactory = Bio::Tree::DistanceFactory->new(-method => 'NJ');
+my $dfactory = Bio::Tree::DistanceFactory->new(-method => 'UPGMA');
 my $statObj;
 if($opts{t} == 1){
     $statObj = Bio::Align::DNAStatistics->new();
