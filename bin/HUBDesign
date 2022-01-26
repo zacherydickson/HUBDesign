@@ -30,7 +30,7 @@ sub CheckForSkip($$@);           #Usage: my $bSkip = CheckForSkip($phase,$bQuiet
 
 sub ParseConfig($);	        #Usage: ParseConfig($configFile);
 
-my $VERSION = "1.1.2";
+my $VERSION = "1.3.1";
 my $MAINTAINER = "ZacheryDickson";
 my $CITATION = "";
 
@@ -234,6 +234,7 @@ sub ConstructOptions(){
     #'clust-seq-out' => OPTINFO->new(def => 'ClustSeq.fna', type => 's', cat => 'Clustering', msg => "Name of a file containing the representative sequences for each cluster"),
     'weight-guide-tree' => OPTINFO->new(def => '1', type => 'f', min => 0, cat => 'Assignment', msg => "The relative weight of the topology generated from co-occurence of clusters compared to the user-provided guide tree"),
     #'dendrogram-out' => OPTINFO->new(def => 'Guide.dend', type => 's', cat => 'Assignment', msg => "Name of a file containing a dendrogram defining the relationships between genomes"),
+    'disable-outgrouping' =>OPTINFO->new(cat =>'Assignment',msg =>"Prevents attempts to reroot the guide dendrogram with isolated taxa"),
     'penetrance' => OPTINFO->new(def => 50, type => 'f', min => 0, max => 100, cat => 'Identification', msg => "The minimum proportion of descendents of a node in which a cluster is present in order to include the cluster"),
     'similarity' => OPTINFO->new(def => 75, type => 'f', min =>0, max => 100, cat => 'Identification', msg => "The maximum amount of overall identity between probes targeting different taxa"),
     'contiguity' => OPTINFO->new(def => 15, type => 'i', min => 1, cat => 'Identification', msg => "The maximum number of consecutive identities between probes targeting different taxa"),
@@ -243,6 +244,7 @@ sub ConstructOptions(){
     'tm-min' => OPTINFO->new(type => 'f', cat => 'Identification', msg => "The minimum melting tempurature of candidate probes; Overrides --tm-range"),
     'tm-max' => OPTINFO->new(type => 'f', cat => 'Identification', msg => "The maximum melting tempurature of candidate probes; Overrides --tm-range"),
     'tm-range' => OPTINFO->new(def => 10, type => 'f', min => 0, cat => 'Identification', msg => "The width of the range of melting temperatures of candidate probes; Cannot be used with min and tm-max"),
+    'whitelist-lowpen' =>OPTINFO->new(cat => 'Identification', msg =>"Prevents attempts to filter candidate probes against sequences failing the penetrance threshold"),
     'disable-lcr-filter' => OPTINFO->new(cat => 'Filtering', msg => ""),
     'lcr-window' => OPTINFO->new(def => 64, type => 'i', min => 1, cat => 'Filtering', msg => "The window length for lcr filtering"),
     'lcr-threshold' => OPTINFO->new(def => 20, type => 'f', cat => 'Filtering', msg => "The threshold for lcr filtering"),
@@ -252,7 +254,7 @@ sub ConstructOptions(){
     #    'extra-blast-options' => OPTINFO->new(type => 's', cat => 'Filtering', msg => "string of flags to pass to blast; cannont contain: task, db, query, evalue, outfmt, dust"),
     'tiling-density' => OPTINFO->new(def => 5, type => 'i', min => 1, cat => 'Selection', msg => "The min desired coverage for a target locus"),
     'disable-probe-balancing' => OPTINFO->new(cat => 'Selection', msg => "Prevents attempts to ensure all genomes are evenly targeted by the probeset, instead finding a constant tiling density which generates the desired number of probes"),
-    'threads' => OPTINFO->new(def => 0, type => 'i', min => 0, cat => 'General', msg => "The max numer of threads to use, 0 -> system max"),
+    'threads' => OPTINFO->new(def => 0, type => 'i', min => 0, cat => 'General', msg => "The max number of threads to use, 0 -> system max"),
     'output-dir' => OPTINFO->new(def => 'HUBDesign_XXXX', type => 's', cat => 'General', msg => 'Directory for output files'),
     'keep' => OPTINFO->new(cat => 'General',msg => "Keep all intermediary files"),
     'force' => OPTINFO->new(cat => 'General',msg => "Prevents attempts to continue a prior run of the pipeline"),
@@ -490,14 +492,14 @@ sub GetPhaseCmd($){
     } elsif($phase eq 'Assignment') {
         %options = (_g => $FileDict{GuideTree}, _G => $FileDict{GuideDend}, w => 'weight-guide-tree',
             t => 'threads', C => 'config');
-        %flags = (v => 'verbose');
+        %flags = (O => 'disable-outgrouping', v => 'verbose');
         @inputs = ($FileDict{ClustInfo});
         $outfile = $FileDict{Assignment}
     } elsif($phase eq 'Identification') {
         %options = (_d => $WorkingDir, g => 'gc-interval', i => 'similarity', l => 'length',
             m => ['tm-interval', 'tm-range'], n => 'candidate-pool', p => 'penetrance',
             r => 'contiguity', t => 'threads', C => 'config');
-        %flags = (k => 'keep', v => 'verbose');
+        %flags = (k => 'keep', v => 'verbose', P => 'whitelist-lowpen');
         @inputs = @FileDict{qw(Assignment ClustSeq)};
         $outfile = $FileDict{Candidates}
     } elsif($phase eq 'Filtering') {

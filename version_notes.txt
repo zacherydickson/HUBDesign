@@ -1,3 +1,17 @@
+V1.4.1
+IMPORTANT: This version and all subsequent versions are made available under a different license which is not freely available for commercial use.
+Alterations to the construction of the guide dendrogram during the assignment phase resulting in faster construction and improved guide trees
+Changes to the rooting of the guide dendrogram, which now by default selects the most isolated taxa as outgroups; this outgrouping can be optionally disabled. If the isolated outgrouping is disabled the root will be placed at the bipartition in the tree which has the most support
+Fixed a bug where specifying specific melting temperatures for the Identification phase resulted in an invalid command to SA_BOND
+Increased speed of Identification phase when blacklisting low penetrance sequences
+Updated SA_BOND readme to include mention of blacklist parameter
+Fixed Bug in Identification step where SA_BOND would ignore the specified maximum number of threads
+Update to Clustering Step where a column of CIGAR strings are added in the cluster information output. This is useful for determining divergence of probes from their nominal targets.
+
+V1.3.1
+Added a new default behaviour during the Identification phase, where sequences failing the penetrance threshold are gathered together into a set of blacklisted sequences to prevent selection of probes targeting these sequences
+Improved logging of Pseudo Genomes present at steps of the Identification phase
+Miniscule performance boost to collapsing candidate probes during the Identification phase
 V1.2.2
 Improved rooting of dendrogram used in Assignment
 V1.2.1

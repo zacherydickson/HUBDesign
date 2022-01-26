@@ -48,6 +48,8 @@ is the same as -length)
                 Note: Output sequences will be regions of up to "-length" bp
 made up of up to "-length" - "-tilingLen" + 1 unique "-tilingLen" oligos
 [-maxThread]: The maximum number of threads to use (Default value is system max)
+[-blacklist]: A comma separated list of fasta formatted files which candidata probes must not match
+
 
 Example
 =======

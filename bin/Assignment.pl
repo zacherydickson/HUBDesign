@@ -12,7 +12,7 @@ use Parallel::ForkManager;
 use FindBin;
 use lib File::Spec->catdir($FindBin::RealBin, '..', 'lib');
 use HUBDesign::Util qw(ValidateThreadCount ProcessNumericOption OpenFileHandle LoadConfig);
-use HUBDesign::Grouping;
+use HUBDesign::Bipartition;
 use HUBDesign::Logger;
 
 #============================================================
@@ -22,9 +22,12 @@ struct  (CLUSTER => {uid => '$', members => '@', assignment => '$', penetrance =
 
 sub LogParameters();	        #Usage: LogParameters();
 sub LoadClusterInfo($);         #Usage: my @clusterList = LoadClusterInfo($clustFile);
-sub CountGroupings($@);         #Usage: my @groupingList = CountClusterGroupings($gTreeFile,@cList);
+sub FastGetLeaves ($$);         #Usage: FastGetLeaves($node,$leaveListRef);
+sub AddBip($$$$@);		#Usage: AddBip(\%IndexMap,\%excludeSet,\%taxaMap,$weight,@taxaList);
+sub CountBips($@);         	#Usage: CountBips($guideTreeFile,@clusterList);
 sub EnsureCompatability(\@);    #Usage: my EnsureCompatability(@groupingList);
-sub ConstructDendrogram(\@\@);  #Usage: my $treeObj = ConstructDendrogram(@cList,@gist);
+sub ProcessNode($$$$@);		#Usage: ProcessNode($node,$gListRef,$indexMapRef,$bFirst,@indexList);
+sub ConstructDendrogram(\@\@@);	#Usage: ConstructDendrogram($cListRef,$gListRef,@outgrp);
 sub GetProcessorCount();        #Usage: my $sys_proc_count = GetProcessorCount();
 sub get_leaf_descendents($);    #Usage: my @leafList = get_leaf_descendents($lcaNode);
 sub unique(@);                  #Usage: my @unique = unique(@list)
@@ -39,7 +42,7 @@ my %DEFAULT = (G => 'Guide.dend', w => 1, t => 1);
 #Handling Input
 
 my %opts;
-getopts('g:G:w:t:C:vh',\%opts);
+getopts('g:G:w:t:C:Ovh',\%opts);
 ParseConfig($opts{C});
 
 if(@ARGV < 1 or exists $opts{h}){
@@ -63,6 +66,7 @@ if(@ARGV < 1 or exists $opts{h}){
             "-t INT\tNumber of Threads; 0 = sys_max (Default: $DEFAULT{t})\n".
             "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
+            "-O\tDisable outgrouping on most isolated taxa\n".
             "-v\tVerbose Output\n".
             "-h\tDisplay this message and exit\n";
     } else{
@@ -101,9 +105,10 @@ while( my ($type,$file) = each %FileDict){
 
 LogParameters();
 my @clusterList = LoadClusterInfo($FileDict{ClustInfo});
-my @groupingList = CountGroupings($opts{g},@clusterList);
+my @groupingList;
+my @outgroupTaxa = CountBips($opts{g},@clusterList);
 EnsureCompatability(@groupingList);
-my $dendObj = ConstructDendrogram(@clusterList,@groupingList);
+my $dendObj = ConstructDendrogram(@clusterList,@groupingList,@outgroupTaxa);
 AssignTaxa($dendObj,\@clusterList);
 print join("\t",qw(ClusterID TaxonID Penetrance)),"\n";
 foreach my $clustObj (@clusterList){
@@ -117,9 +122,10 @@ $Logger->Log("Done","INFO");
 
 #Outpits the Parameters to STDERR
 sub LogParameters(){
-    my @paramNames = ("Cluster Info","Guide Tree","Dendrogram Output","Cluster Weight","Threads");
+    my @paramNames = ("Cluster Info","Guide Tree","Dendrogram Output","Cluster Weight","Outgrouping","Threads");
     my %params;
-    @params{@paramNames} = ($FileDict{ClustInfo},$opts{g},$opts{G},$opts{w},$opts{t});
+    @params{@paramNames} = ($FileDict{ClustInfo},$opts{g},$opts{G},$opts{w},"Enabled",$opts{t});
+    $params{Outgrouping} = 'Disabled' if(exists $opts{O});
     delete $params{"Guide Tree"} unless(defined $opts{g});
     $Logger->LogParameters(map {($_,$params{$_})} @paramNames);
 }
@@ -151,171 +157,262 @@ sub LoadClusterInfo($){
     return(@clusterList);
 }
 
+#Depth First traversal of a tree getting all tips decendent from each node
+# Input: A node and a reference to an array to store the results in
+# Output: The list of tip ids descendent from the node
+sub FastGetLeaves ($$){
+    my $node = shift;
+    my $outputRef = shift;
+    if($node->is_Leaf){
+        push(@{$outputRef},[$node->id]);
+        return ($node->id);
+    }
+    my @taxaList; 
+    push(@{$outputRef},[]);
+    my $index = $#{$outputRef};
+    foreach my $child ($node->each_Descendent){
+        my @ctaxaList = FastGetLeaves($child,$outputRef);
+        push(@{$outputRef->[$index]},@ctaxaList);
+    }
+    return @{$outputRef->[$index]};
+}
+
+
+#Input: A reference to an array of groupings Objects
+#	A reference to a hash with keys of ids and values of indexes in the first argument
+#	A reference to a hash with keys of grouping ids which shouldn't be included
+#	A reference to a hash with keys of taxids and values of indexes for the taxids
+#	An array of taxids
+#Ouput: A HUBDesign::Bipartition Object constructed from the taxaList
+sub AddBip($$$$@) {
+    my ($gIndexRef,$exSetRef,$txMapRef,$weight,@taxaList) = @_;
+    my @indexList = @{$txMapRef}{@taxaList};
+    my $grpObj = HUBDesign::Bipartition->new(members => \@indexList, count => $weight);
+    my $id = $grpObj->get_bits;
+    return if(exists $exSetRef->{$id});
+    $exSetRef->{$id} = 1;
+    if(exists $gIndexRef->{$id}){
+        $groupingList[$gIndexRef->{$id}]->increment($weight);
+    } else {
+        push(@groupingList,$grpObj);
+        $gIndexRef->{$id} = $#groupingList;
+    }
+    return $grpObj;
+}
+
 #Given a list of clusters, returns a list of GROUPING objects implied by the list
 #Input: an array of CLUSTER Objects
-#Output: an array of HUBDesign::Grouping Objects
-sub CountGroupings($@){
-    $Logger->Log("Counting groupings...","INFO");
+#Output: an array of outgroup taxa
+sub CountBips($@){
     my ($guideTreeFile,@clusterList) = @_;
+    $Logger->Log("Counting Bipartition Instances...","INFO");
     my %taxaSet; #Unique Set of taxa in all clusters
     foreach my $clustObj (@clusterList){
         @taxaSet{@{$clustObj->members}} = (1) x scalar(@{$clustObj->members});
     }
-    $taxaSet{'OUTGROUP'} = 1;
-    @taxaSet{keys %taxaSet} = (1 .. scalar(keys %taxaSet)); #Assign a unique value to each taxa
-    my @groupingList;
+    my $nTaxa = scalar(keys %taxaSet);
+    HUBDesign::Bipartition->initialize_nTaxa($nTaxa);
+    @taxaSet{sort keys %taxaSet} = (0 .. ($nTaxa-1)); #Assign a unique value to each taxa
+    my %taxaCount; #For tracking how many times each taxa actually appears in any non singular
+    @taxaCount{keys %taxaSet} = (0) x $nTaxa;
     my %GroupingIndex; #Tracks which element of the list a particular grouping is
     foreach my $clustObj (@clusterList){
-        #Count the members of the clusters as one group, and all those outside as another
-        for (my $inSet = 0; $inSet < 2; $inSet++){
-            my @G = unique(@{$clustObj->members});
-            @G = notkeys(%taxaSet,@G) unless($inSet);
-            @G = sort @G;
-            my $id = join(';',sort {$a <=> $b} @taxaSet{@G});
-            if(exists $GroupingIndex{$id}){
-                $groupingList[$GroupingIndex{$id}]->increment($opts{w});
-                $groupingList[$GroupingIndex{$id}]->isObserved(1) if($inSet);
-            } else {
-                push(@groupingList,HUBDesign::Grouping->new(members => \@G, count => $opts{w},bObs => $inSet));
-                $GroupingIndex{$id} = $#groupingList;
+        my @taxaList = unique(@{$clustObj->members});
+        if(@taxaList > 1){
+            foreach my $txid (@taxaList){
+                $taxaCount{$txid}++;
             }
         }
+        my $grpObj = AddBip(\%GroupingIndex,{},\%taxaSet,$opts{w},@taxaList);
     }
     my %SeenSubsets; #Tracks groupings which have already been seen in the tree
-    #^ Used to prevent double counting in a cases where non_cluster leaves are in the
+    #^ Used to prevent double counting in cases where non-cluster leaves are in the
     # guide tree
     if(defined $guideTreeFile){
         my $treeObj = Bio::TreeIO->new(-file => $guideTreeFile, -format => "newick")->next_tree();
         my $root = $treeObj->get_root_node;
-        my $nextID = 0;
-        foreach my $node ($root->get_all_Descendents){
-            my @members; 
-            foreach my $desc ($node->get_all_Descendents){
-                if ($desc->is_Leaf and defined $desc->id and exists $taxaSet{$desc->id}){
-                    push(@members,$desc->id);
-                }
+        my @leavesDescendentFromEachNode;
+        FastGetLeaves($root,\@leavesDescendentFromEachNode);
+        shift @leavesDescendentFromEachNode; #Don't want to count the bipartition at the root of All|Empty
+        if(scalar($root->each_Descendent) == 2){ #Two children at the root are complementary, only one is needed
+            shift @leavesDescendentFromEachNode;
+        }
+        foreach my $taxaListRef (@leavesDescendentFromEachNode){
+            my @taxaList;
+            foreach my $txid (@{$taxaListRef}){
+                push(@taxaList,$txid) if(exists $taxaSet{$txid});
             }
-            next unless (@members);
-            my $id = join(';',sort {$a <=> $b} @taxaSet{@members});
-            next if(exists $SeenSubsets{$id});
-            $SeenSubsets{$id}=1;
-            if(exists $GroupingIndex{$id}){
-                $groupingList[$GroupingIndex{$id}]->increment;
-                $groupingList[$GroupingIndex{$id}]->isObserved(1);
-            } else {
-                push(@groupingList,HUBDesign::Grouping->new(members => \@members, count => 1,bObs=>1));
-                $GroupingIndex{$id} = $#groupingList;
+            next unless(@taxaList);
+            if(@taxaList > 1){
+                foreach my $txid (@taxaList){
+                    $taxaCount{$txid}++;
+                }
+                AddBip(\%GroupingIndex,\%SeenSubsets,\%taxaSet,1,@taxaList);
             }
         }
     }
-    $Logger->Log(sprintf("Counted occurences for %d groupings",scalar(@groupingList)),"INFO");
-    return @groupingList;
+    my $bipCount = scalar(@groupingList);
+    #Find the Taxa which appears in the fewest groupings
+    my %Min = (val => $bipCount, txidList => []);
+    while(my ($txid,$count) = each %taxaCount){
+        if($count < $Min{val}){
+            %Min = (val => $count, txidList => [$txid]);
+        } elsif($count == $Min{val}){
+            push(@{$Min{txidList}}, $txid);
+        }
+    }
+    $Logger->Log("Instances counted for $bipCount Bipartitions","INFO");
+    return @{$Min{txidList}};
 }
 
-
-
-#Given an ordered list of groupings, remove any which are incompatible with earlier groupings in the
-#tree #smaller is a subset of the larger)
-#Input:  Reference to an array of ordered HUBDesign::Grouping objects
+#Given an ordered list of groupings, remove any which are incompatible with earlier groupings in the tree
+#Input:  Reference to an array of HUBDesign::Bipartition objects
 #Output: None, edits the input in place
 sub EnsureCompatability(\@){
-    $Logger->Log("Culling incompatible groupings...","INFO");
+    $Logger->Log("Culling Incompatibilities...","INFO");
     my $gListRef = shift;
-    #Sort Groupings By Number of observances,
-    #Then prefer groupings actually observed, rather than implied inverting a cluster
-    #Then break ties by the size of the grouping
-    @{$gListRef} = sort {$b->count <=> $a->count || $b->isObserved <=> $a->isObserved || scalar($b->members) <=> scalar($a->members)} @{$gListRef};
+    my $nBip = scalar(@{$gListRef});
+    #Sort Groupings By Number of observances, then break ties by the size of the grouping
+    @{$gListRef} = sort {$b->count <=> $a->count || $b->size <=> $a->size} @{$gListRef};
+    my $comparisons = $nBip * ($nBip - 1) / 2;
+    my $elim = 0;
     for(my $i = 0; $i < $#{$gListRef}; $i++){
         for(my $j = $i+1; $j < @{$gListRef}; $j++){
             my $bCompat = $gListRef->[$i]->isCompatible($gListRef->[$j]);
-            #print STDERR join("-",$gListRef->[$i]->members),"\t",join("-",$gListRef->[$j]->members),"\t$bCompat\n";
             next if($bCompat);
             splice(@{$gListRef},$j--,1);
         }
     }
-    $Logger->Log(sprintf("A total of %d compatible groupings remain",scalar(@{$gListRef})),"INFO");
+    $nBip = scalar(@{$gListRef});
+    $Logger->Log("There are $nBip compatible bipartitions remaining ","INFO");
 }
 
-
-#Given a set of clusters, and a set of compatible groupings of those clusters, generates a
-#tree object 
-#Input: a set of clusters (used to ensure all input taxa are in the tree), and a set of
-#compatible groupings
-#Output: a Bio::Tree Object
-sub ConstructDendrogram(\@\@){
-    $Logger->Log("Constructing Dendrogram...","INFO");
-    my ($cListRef,$gListRef) = @_;
-    #Sort the groupings by the coverage of the set
-    @{$gListRef} = sort {scalar($b->members) <=> scalar($a->members)} @{$gListRef};
-    my $firstSingleton = 0;
-    while($firstSingleton < @{$gListRef} and scalar($gListRef->[$firstSingleton]->members) > 1){
-        $firstSingleton++ 
-    }
-    splice(@{$gListRef},$firstSingleton) if($firstSingleton < @{$gListRef});
-    #Array of array ref with index elements; tracks which groupings are directly nested inside another; Note this array has one extra element; the first element is the children of the root
-    my @children = ([]);
-    push(@children,[]) foreach (@{$gListRef});
-    for(my $i = 0; $i < @{$gListRef}; $i++){
-        my $j = 0;
-        my $bSubset = 1;
-        #print STDERR "$i\n";
-        while($bSubset){ #Until the current grouping is not a subset of any other child of the current node
-            #  print "#$i\t$j\t$bSubset\n";
-            $bSubset=0;
-            #Find which child (if any) in the current node of which the current group is a subset
-            foreach my $cIdx (@{$children[$j]}){
-                if($gListRef->[$i]->isSubset($gListRef->[$cIdx])){
-                    $bSubset=1;
-                    $j = $cIdx+1;
-                    last;
+# Given a set of indexes to be covered by a node, both recursively and
+# iteratively adds nodes until all the required children are decendents of the
+# node
+# Input:    A Bio::Tree::Node object describing the current node
+#           A reference to an array of HUBDesign::Bipartition Objects
+#           A reference to a hash with keys of indexes and values of taxon ids
+#           A list of indexes to be covered by the node
+# Ouput:    None, alll nodes are attached to the node node objects 
+sub ProcessNode($$$$@){
+    my ($node,$gListRef,$indexMapRef,$bFirst,@nodeIndexList) = @_;
+    @nodeIndexList = sort {$a <=> $b} @nodeIndexList;
+    my $nTaxa = scalar(keys %{$indexMapRef});
+    while (@nodeIndexList){
+        my $nodeGrpSize = scalar(@nodeIndexList);
+        if($nodeGrpSize == 1){ #Is tip
+            $node->id($indexMapRef->{shift @nodeIndexList});
+            return;
+        }
+        my $flag = ($nodeGrpSize > $nTaxa/2) ? 2 : 0; #Make sure comparisons are always to the 'on' grp
+        #Find the bip which contains a grouping which is the largest subset of the taxaSet
+        my %Max = (size => -1,obj => undef,isNeg => -1,idx => -1);
+        my $nodeGrp = HUBDesign::Bipartition->new(members => \@nodeIndexList);
+        if($bFirst){
+            %Max = (size => $gListRef->[0]->size,obj => $gListRef->[0],isNeg => 1, idx => 0);
+            $bFirst = 0;
+        } else {
+            for(my $i = 0; $i < @{$gListRef};$i++){
+                my $grpObj = $gListRef->[$i];
+                next if($grpObj->size > $nodeGrpSize);
+                my %cur; 
+                #Compare Big grp in bip to nodeGrp
+                if($nTaxa-$grpObj->size < $nodeGrpSize && $grpObj->isSubset($nodeGrp,$flag | 0b1)){
+                    %cur = (size => $nTaxa-$grpObj->size,obj => $grpObj, isNeg => 1, idx => $i);
                 }
+                #Compare Small grp in bip to nodeGrp
+                if(!%cur && $grpObj->size < $nodeGrpSize && $grpObj->isSubset($nodeGrp,$flag | 0b0)){
+                    %cur = (size => $grpObj->size, obj => $grpObj, isNeg => 0, idx => $i);
+                }
+                %Max = %cur if(%cur && $cur{size} > $Max{size});
             }
         }
-        push(@{$children[$j]},$i);
+        if(defined $Max{obj}){ #Found a subset
+            #Remove the found bip from further consideration
+            splice(@{$gListRef},$Max{idx},1);
+            #Make new nodes for the subset and the remainder
+            my @children;
+            foreach my $i (0 .. 1){
+                push(@children,Bio::Tree::Node->new());
+                $node->add_Descendent($children[$i]);
+            }
+            $node = $children[1];
+            #Recurse with the subset
+            my @indexList = $Max{obj}->members;
+            @indexList = notkeys(%{$indexMapRef},@indexList) if ($Max{isNeg});
+            ProcessNode($children[0],$gListRef,$indexMapRef,0,@indexList);
+            #Repeat the loop with the remainder
+            my %indexSet;
+            @indexSet{@nodeIndexList} = (1) x $nodeGrpSize;
+            @nodeIndexList = notkeys(%indexSet,@indexList);
+            unless(@nodeIndexList){
+                $children[0]->ancestor($node->ancestor->ancestor);
+                $node->ancestor->remove_Descendent($node);
+            }
+        } else{ #This is an internal node, but there are no subgroupings, add children for each remaining taxa
+            foreach my $index (@nodeIndexList){
+                $node->add_Descendent(Bio::Tree::Node->new(-id => $indexMapRef->{$index}))
+            }
+            @nodeIndexList = ();
+        }
     }
-    my %taxaSet; #Unique Set of taxa which must eventually have a leaf in the current node
-    #Initialize this with all taxa at the root
+}
+
+#Given a set of compatible bipartitions of a tree, constructs the tree
+#Works by recursively subdividing the entire set of taxa
+#Input: A reference to an array of CLUSTER objects
+#       A reference to an array of HUBDesign::Bipartition Objects
+#       A list of taxa which are to be considered outgroups
+#Output:    A Bio::Tree Object
+sub ConstructDendrogram(\@\@@){
+    $Logger->Log("Constructing Dendrogram...","INFO");
+    my ($cListRef,$gListRef,@outgroupTaxa) = @_;
+    #Construct a mapping from bitstr index to txid
+    my %taxaSet;
     foreach my $clustObj (@{$cListRef}){
         @taxaSet{@{$clustObj->members}} = (1) x scalar(@{$clustObj->members});
     }
-    my @nodeList;
-    push(@nodeList,Bio::Tree::Node->new()) foreach (@children);
-    for(my $nIdx = 0; $nIdx < @children; $nIdx++){
-        my $node = $nodeList[$nIdx];
-        unless($nIdx == 0){
-            %taxaSet = ();
-            @taxaSet{$gListRef->[$nIdx-1]->members} = (1) x scalar($gListRef->[$nIdx-1]->members);
+    my $nTaxa = scalar(keys %taxaSet);
+    my %indexMap;
+    @indexMap{(0 .. ($nTaxa-1))} = sort keys %taxaSet;
+    my $root = Bio::Tree::Node->new();
+    ProcessNode($root,$gListRef,\%indexMap,1,(keys %indexMap));
+    my $dendObj = Bio::Tree::Tree->new(-root => $root);
+    if(!exists $opts{O} and @outgroupTaxa){
+        my @outgroupNodes;
+        foreach my $txid (@outgroupTaxa){
+            push(@outgroupNodes,$dendObj->find_node(-id => $txid));
         }
-        #Add any leaves which should be within the tree under this node, but are not in
-        #any of the groupings marked as children for this node
-        foreach my $txid (notkeys(%taxaSet,map {$gListRef->[$_]->members} @{$children[$nIdx]})){
-            $node->add_Descendent(Bio::Tree::Node->new(-id => $txid));
-        }
-        foreach my $cIdx (@{$children[$nIdx]}){
-            if(scalar($gListRef->[$cIdx]->members) == 1){
-                $nodeList[$cIdx+1]->id(($gListRef->[$cIdx]->members)[0]);
+        $Logger->Log("Rooting with outgroup(s): @outgroupTaxa...","INFO");
+        if(@outgroupNodes){
+            my $outgroupNode = $outgroupNodes[0];
+            $outgroupNode = $dendObj->get_lca(@outgroupNodes) if(@outgroupNodes > 1);
+            if(defined $outgroupNode->ancestor and defined $outgroupNode->ancestor->ancestor){
+                $dendObj->reroot($outgroupNode->ancestor);
+                $dendObj->splice($root);
+                foreach my $messNode ($dendObj->find_node(-branch_length => 0)){
+                    $dendObj->splice($messNode);
+                }
+            } else {
+                $Logger->Log("New root is the old root","WARNING");
             }
-            $node->add_Descendent($nodeList[$cIdx+1]);
+        } else {
+            $Logger->Log("Could not find @outgroupTaxa in the tree : Skipping Outgrouping","WARNING");
         }
     }
-    my $dendObj = Bio::Tree::Tree->new(-root => $nodeList[0]);
-    my ($outgrpnode) = $dendObj->find_node(-id => 'OUTGROUP');
-    $outgrpnode->id(sprintf("IN_%0*d",$_ID_PADDING,0));
-    $dendObj->reroot($outgrpnode);
-    $dendObj->splice($nodeList[0]);
-    $dendObj->splice($outgrpnode->each_Descendent);
-    ##Ensure all nodes in the tree have an id
-    my $nextID = 1;
+    #Ensure Every Node in the Tree Has an ID
+    my $next_id = 0;
     foreach my $node ($dendObj->get_nodes){
-        next if(defined $node->id);
-        $node->id(sprintf("IN_%0*d",$_ID_PADDING,$nextID++));
+        $node->id(sprintf("IN_%0*d",$_ID_PADDING,$next_id++)) unless(defined $node->id);
     }
-    Bio::TreeIO->new(-format => "newick",-file => ">".$opts{G})->write_tree($dendObj);
+    my $treeIO = Bio::TreeIO->new(-file => ">$opts{G}", -format => 'newick');
+    $treeIO->write_tree($dendObj);
     $Logger->Log("Dendrogram written to $opts{G}","INFO");
     return $dendObj;
 }
 
-#Returns the makimum number of processors on a linux based system
+#Returns the maximum number of processors on a linux based system
 #Output: -1 if /proc/cpuinfo not found, the number of processors otherwise
 sub GetProcessorCount(){
     my $cpu_count = -1;

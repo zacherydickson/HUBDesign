@@ -25,12 +25,13 @@ sub GetProcessorCount();	 #my $cpu_count = GetProcessorCount();
 sub LogParameters();             #LogParameters();
 sub ParseAssignments($);         #my %ClusterAssignments = ParseAssignments($assignmentFile);
 sub ConstructPseudoGenomes($$);	 #my %PGDict = ConstructPseudogenomes($clustersSeqFile,\%ClustAssign);
-sub WritePseudoGenomes($);	 #my $tempFile = WritePseudoGenomes(\%PGDict);
-sub RunBOND($);			 #my $tempFile = RunBOND($PGSeqFile);
+sub WritePseudoGenomes($);	 #my @tempFiles = WritePseudoGenomes(\%PGDict);
+sub RunBOND($;$);		 #my $tempFile = RunBOND($PGSeqFile,$LPSeqFile);
 sub CollapseBaits($$);	         #my @BaitRegions = CollapseBaits($oligFile,\%PGDict);
 sub OutputResults($);		 #OutputResults(\@BRList);
 sub ParseConfig($); 	     #Usage: ParseConfig($ConfigFile);
 
+my $_LOWPEN_ID = "_LOWPEN_";
 my $_BOND_EXECUTABLE = "SA_BOND";
 my $_ID_PADDING = 6;
 my $MIN_PERC = 0;
@@ -38,7 +39,7 @@ my $MAX_PERC = 100;
 my $MIN_PROBE_LENGTH = 1;
 my $MIN_TM_RANGE = 1;
 my %DEFAULT;
-@DEFAULT{qw(d g i l m n p r t k)} = ('/tmp', '30.0:70.0', 75 ,75, '10.0', -1,'50.0', 15, 0, 0);
+@DEFAULT{qw(d g i l m n p r t P k)} = ('/tmp', '30.0:70.0', 75 ,75, '10.0', -1,'50.0', 15, 0, 0, 0);
 
 
 #============================================================
@@ -76,6 +77,7 @@ if(@ARGV < 2 or exists $opts{h}){
             "-t [0-∞)\tThe number of threads to use; 0 is system max (Default: $DEFAULT{t})\n".
             "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
+            "-P\tDisable blacklisting of sequences too similar to low penetrance sequences\n".
             "-k\tKeep intermediary files\n".
             "-v\tVerbose Output\n".
             "-h\tDisplay this message and exit\n";
@@ -169,8 +171,8 @@ while( my ($type,$file) = each %FileDict){
 LogParameters();
 my %ClusterAssignment = ParseAssignments($FileDict{Assignment});
 my %PseudoGenomeDict = ConstructPseudoGenomes($FileDict{ClustSeq},\%ClusterAssignment);
-$FileDict{PseudoGenome} = WritePseudoGenomes(\%PseudoGenomeDict);
-$FileDict{Oligos} = RunBOND($FileDict{PseudoGenome});
+@FileDict{qw(PseudoGenome LowPen)} = WritePseudoGenomes(\%PseudoGenomeDict);
+$FileDict{Oligos} = RunBOND($FileDict{PseudoGenome},$FileDict{LowPen});
 my @BaitRegionList = CollapseBaits($FileDict{Oligos},\%PseudoGenomeDict);
 OutputResults(\@BaitRegionList);
 
@@ -179,7 +181,7 @@ OutputResults(\@BaitRegionList);
 
 #Outputs the Parameters to STDERR
 sub LogParameters(){
-     my @paramNames = ("Probe Length","Max Similarity","Max Run","GC Range","T_m Interval","Max Candidates","Min Penetrance","Threads","Assignments","Clusters","Temp Directory","Keep Files");
+     my @paramNames = ("Probe Length","Max Similarity","Max Run","GC Range","T_m Interval","Max Candidates","Min Penetrance","Threads","Assignments","Clusters","Temp Directory","Keep Files","Blacklist LowPen");
     my %params;
     @params{@paramNames} = ($opts{l},$opts{i},$opts{r},"$opts{g_min} - $opts{g_max}",undef,$opts{n}, $opts{p},$opts{t},$FileDict{Assignment},$FileDict{ClustSeq},$opts{d},undef);
     if(exists $opts{m_range}){
@@ -192,6 +194,7 @@ sub LogParameters(){
         $params{"T_m Range"} = "$min - $max";
     }
     $params{"Keep Files"} = $opts{k} ? "TRUE" : "FALSE";
+    $params{"Blacklist LowPen"} = $opts{P} ? "FALSE" : "TRUE";
     $Logger->LogParameters(map {($_, $params{$_})} (sort keys %params));
 }
 
@@ -207,6 +210,7 @@ sub ParseAssignments($){
     }
     my %ClustAssign;
     my $clustCount = 0;
+    my $failCount = 0;
     while(my $line = <$fh>){
         chomp($line);
         my ($clust_id,$taxon_id,$penetrance) = split(/\t/,$line);
@@ -221,10 +225,13 @@ sub ParseAssignments($){
                 next;
             }
             $ClustAssign{$clust_id} = $taxon_id;
+        } elsif (!$opts{P}) {
+            $ClustAssign{$clust_id} = $_LOWPEN_ID;
+            $failCount++;
         }
     }
     close($fh);
-    my $passCount = scalar(keys %ClustAssign);
+    my $passCount = scalar(keys %ClustAssign) - $failCount;
     $Logger->Log(sprintf("Parsed %d assignments with %d (%0.1f%%) with sufficient penetrance",$clustCount,$passCount,$passCount/$clustCount*100),"INFO");
     return %ClustAssign;
 }
@@ -249,15 +256,20 @@ sub ConstructPseudoGenomes($$){
             $Logger->Log("Ignoring duplicate sequnce for $clust_id","WARNING");
             next;
         }
-        $SeenClusters{$clust_id} = 1;
         $clustCount++;
+        $SeenClusters{$clust_id} = 1;
         my $taxon_id = $ClustAssignRef->{$clust_id};
         my $clustObj = CLUSTER->new(uid => $clust_id, seq => $seqObj->seq);
         $PGDict{$taxon_id} = HUBDesign::Pseudorg->new(id => $taxon_id) unless(exists $PGDict{$taxon_id});
         $PGDict{$taxon_id}->add($clustObj);
     }
+    my @taxon_idList = keys %PGDict;
+    foreach my $taxon_id (@taxon_idList){
+        delete $PGDict{$taxon_id} unless($PGDict{$taxon_id}->len >= ($opts{l} +25));
+    }
     my $taxonCount = scalar(keys %PGDict);
-    $Logger->Log(sprintf("Partitioned %d clusters into %d pseudo-genomes",$clustCount,$taxonCount),"INFO");
+    $taxonCount-- if(exists $PGDict{$_LOWPEN_ID});
+    $Logger->Log(sprintf("Partitioned %d clusters into %d pseudo-genomes; %d pg's were too short",$clustCount,$taxonCount,scalar(@taxon_idList)-$taxonCount),"INFO");
     return %PGDict;
 }
 
@@ -269,31 +281,46 @@ sub WritePseudoGenomes($){
     $Logger->Log("Writing psuedo-genomes to file...","INFO");
     my $tmpfile = File::Temp->new(DIR => $opts{d}, TEMPLATE => "HUBDESIGN_PG_XXXX", SUFFIX => ".fna", UNLINK => ($opts{k}+ 1) % 2);
     my $SeqIOObj = Bio::SeqIO->new(-file => ">$tmpfile",-format => 'fasta');
+    my $lowpenfile = undef;
+    my $lowpenIOObj = undef;
+    if(!$opts{P} and exists $PGDictRef->{$_LOWPEN_ID}){
+        $lowpenfile = File::Temp->new(DIR => $opts{d}, TEMPLATE => "HUBDESIGN_LP_XXXX", SUFFIX => ".fna", UNLINK => ($opts{k}+ 1) % 2);
+        $lowpenIOObj = Bio::SeqIO->new(-file => ">$lowpenfile",-format => 'fasta');
+    }
     my $totalLength = 0;
     foreach my $taxon_id (sort keys %{$PGDictRef}){
         my $seqObj = Bio::Seq->new(-id => $taxon_id, -seq => $PGDictRef->{$taxon_id}->seq);
+        if($taxon_id eq $_LOWPEN_ID){
+            $lowpenIOObj->write_seq($seqObj);
+            $Logger->Log("Low Penetrance sequences totalling @{[$PGDictRef->{$taxon_id}->len]} bp written to $lowpenfile","INFO");
+            next;
+        }
         $totalLength += $PGDictRef->{$taxon_id}->len;
         $SeqIOObj->write_seq($seqObj);
     }
     $Logger->Log("Pseudo-genomes totalling $totalLength bp written to $tmpfile","INFO");
-    return $tmpfile;
+    return ($tmpfile,$lowpenfile);
 }
 
 #Given a file containing Pseudo genome sequences, Calls BOND and returns the file containing the raw
 #bond output
 #Inputs - A file containing fasta formtatted pseudor-genomes
 #Output - A File::Temp object containing the raw BOND output;
-sub RunBOND($){
+sub RunBOND($;$){
     my $infile = shift;
+    my $blfile = shift;
     $Logger->Log("Identifying candidate probes...","INFO");
     my $outfile = File::Temp->new(DIR => $opts{d}, TEMPLATE => "HUBDESIGN_CP_XXXX", SUFFIX => ".olig", UNLINK => ($opts{k}+ 1) % 2);
     my $TmFlag;
     if (exists $opts{m_range}) {
         $TmFlag = "-rangeTm $opts{m_range}";
     } else {
-        $TmFlag = "-minGC $opts{m_min} -maxGC $opts{m_max}";
+        $TmFlag = "-minTm $opts{m_min}" if(defined $opts{m_min});
+        $TmFlag = join(" ",($TmFlag,"-maxTm $opts{m_max}")) if(defined $opts{m_max});
     }
-    my $cmd = "$_BOND_EXECUTABLE $infile $outfile -length ".($opts{l}+25)." -tilingLen $opts{l} -seqSim $opts{i} -maxMatch $opts{r} $TmFlag -minGC $opts{g_min} -maxGC $opts{g_max} -maxOligs $opts{n} 1>&2";
+    my $blFlag = (defined $blfile) ? "-blacklist $blfile" : "";
+    #Note: Changes to TilingLen mode affect which PGs are included (ConstructPG)
+    my $cmd = "$_BOND_EXECUTABLE $infile $outfile -length ".($opts{l}+25)." -tilingLen $opts{l} -seqSim $opts{i} -maxMatch $opts{r} $TmFlag -minGC $opts{g_min} -maxGC $opts{g_max} -maxOligs $opts{n} $blFlag -maxThread $opts{t} 1>&2";
     $Logger->Log("Running BOND with command: $cmd","INFO");
     $cmd = "stdbuf -i0 -o0 -e0 $cmd" unless(system("stdbuf -e0 sleep 1"));
     my $result = system($cmd);
@@ -316,6 +343,7 @@ sub CollapseBaits($$){
     }
     my $candidate_probe_count = 0;
     my @BRList;
+    my @taxon_idList = (sort keys %{$PGDictRef});
     while(my $line = <$fh>){
         chomp($line);
         my ($tgtStr,$seq,undef,undef,$posStr,undef) = split(/\t/,$line);
@@ -323,13 +351,11 @@ sub CollapseBaits($$){
         $index--;
         my (undef,$pos) = split(/:/,$posStr);
         $pos++;
-        my $taxon_id = (sort keys %{$PGDictRef})[$index];
+        my $taxon_id = $taxon_idList[$index];
+        next if($taxon_id eq $_LOWPEN_ID);
         my ($clust_id,$clust_pos) = $PGDictRef->{$taxon_id}->map_pos($pos);
         $candidate_probe_count++;
         my $brObj = HUBDesign::BaitRegion->new(taxon_id => $taxon_id,clust_id => $clust_id,pos => $clust_pos, seq => $seq);
-        if(!defined $brObj->pos){
-            print STDERR $brObj->toStr(),"\t*$posStr&$pos\t_$clust_pos\n";
-        }
         push(@BRList,$brObj);
     }
     $Logger->Log("Read $candidate_probe_count candidate probes","INFO");

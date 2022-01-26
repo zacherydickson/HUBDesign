@@ -22,7 +22,7 @@ use Bio::Align::ParallelDNAStatistics;
 #Declarations
 
 struct  (GENE => {tid => '$', chr => '$', uid => '$', start => '$', end => '$', strand => '$', seq => '$'});
-struct  (CLUSTER => {uid => '$', seq => '$', members => '@'});
+struct  (CLUSTER => {uid => '$', seq => '$', members => '@',cigar => '%'});
 
 sub LoadGFFSet($@);         #Usage: my %GFFSet = LoadGFFSet($GFFListFile,@GFFFileList);
 sub LoadGeneInfo(%);        #Usage: my %GeneInfo = LoadGenes(%GFFSet);
@@ -31,6 +31,7 @@ sub OutputCluster($$$);     #Usage: OutputCluster($ClustObj,$ClustHandle,$SeqOOb
 sub AlignByProt($$);        #Usage: AlignByProt(\@geneList,$geneName);
 sub ConstructTree($$);      #Usage: my $TreeObj = ConstructTree($alnObj,$geneName);
 sub ReRootTree($);          #Usage: ReRootTree($treeObj);
+sub GetCIGARHash($);	    #Usage: my %cigar = GetCIGARHash($alnObj);
 sub ExtractClusters($$$$);  #Usage: my @clusterList = ExtractClusters(\@geneList,$alnObj,$treeObj,$geneName);
 sub PartitionTipLabels($$); #Usage: my @ClusteredLAbels = PartitionTipLAbels($nodeObj,$threshold)
 sub ParseConfig($);         #Usage: ParseConfig($ConfigFile);
@@ -289,7 +290,7 @@ sub OutputCluster($$$){
     my ($clustObj,$clustHandle,$SeqOObj) = @_;
     my $oldFH = select($clustHandle);
     foreach my $geneObj (@{$clustObj->members}){
-        print join("\t",($clustObj->uid,$geneObj->tid,$geneObj->chr,$geneObj->uid,$geneObj->start,$geneObj->end,$geneObj->strand)),"\n";
+        print join("\t",($clustObj->uid,$geneObj->tid,$geneObj->chr,$geneObj->uid,$geneObj->start,$geneObj->end,$geneObj->strand,$clustObj->cigar->{$geneObj->uid})),"\n";
     }
     print $SeqOObj Bio::Seq->new(-seq => $clustObj->seq, -id => $clustObj->uid);
     select($oldFH);
@@ -381,6 +382,53 @@ sub ReRootTree($){
     }
 }
 
+#Given an alignment returns the CIGAR strings for each sequence with the consensus as a reference
+#Input: a Bio::SimpleAlign object
+#Output: a hash with keys of seqid and values of SAM style CIGAR strings
+sub GetCIGARHash($){
+    my $self = shift;
+    die "GetCIGARHash requires a Bio::SimpleAlign object" unless(ref($self) eq "Bio::SimpleAlign");
+    my @consChars = split(//,$self->consensus());
+    my %cigar;
+    foreach my $seqObj ($self->each_seq){
+        my $str;
+        my @qChars = split(//,$seqObj->seq);
+        my $run = 0;
+        my $lastChar = 0;
+        my $gapChar = $self->gap_char;
+        for(my $i = 0; $i < $qObj->length; $i++){
+            my $curChar;
+            if($qChars[$i] eq $consChars[$i]){ #Both the same
+                if($qChars[$i] eq $gapChar){ #Both Gaps, skip
+                    $curChar = undef;
+                } else { #Match
+                    $curChar = '=';
+                }
+            } else { #Both different
+                if($qChars[$i] eq $gapChar){ #Deletion
+                    $curChar = 'D';
+                } elsif($consChars[$i] eq $gapChar){ #Insertion
+                    $curChar = 'I';
+                } else { #Mismatch
+                    $curChar = 'X';
+                }
+            }
+            if(defined $curChar){
+                if($curChar eq $lastChar){
+                    $run++;
+                } else {
+                    $str .= $run.$lastChar if($run);
+                    $run = 1;
+                    $lastChar = $curChar;
+                }
+            }
+        }
+        $str .= $run.$lastChar;
+        $cigar{$seqObj->id} = $str;
+    }
+    return %cigar;
+}
+
 #Given a set of genes and a tree describing their relationships, extract the representative sequences
 # for each cluster
 #Input: a reference to an array of GENE objects, a Bio::Tree Obj, and a gene name
@@ -395,9 +443,10 @@ sub ExtractClusters($$$$){   #Usage: my @clusterList = ExtractClusters(\@geneLis
     foreach my $cluster (@ClusteredLabels){
         my $clustID = sprintf("%s_%0*d",$geneName,$CLUST_ID_PADDING,$nextID++);
         ##Create a New Cluster, with the consensus sequence
-        my $consensus = $alnObj->select_noncont_by_name(@{$cluster})->consensus_string();
+        my $subalnObj = $alnObj->select_noncont_by_name(@{$cluster});
+        my $consensus = $subalnObj->consensus_string();
         $consensus =~ s/\?//g;
-        my $clustObj = CLUSTER->new(uid => $clustID, seq => $consensus);
+        my $clustObj = CLUSTER->new(uid => $clustID, seq => $consensus, cigar => {GetCIGARHash($subaln)});
         foreach my $Label (sort @{$cluster}){
             ##Search the seq list for the label and move the GENE obj to the Cluster
             my $i = 0;
