@@ -5,6 +5,16 @@ Hierarchical Unique Bait Design for simultaneous and specific capture of known a
 Given a set of annotated genomes and a species tree creates a probe set which will allow unique capture of as many nodes in the tree as possible,
 attempting to balance the number of baits per genome.
 
+## License
+Use or reproduction of Materials on the HUBdesign website, in whole or in part, by any non-academic organization whether or not for non-commercial (including research) or commercial purposes is prohibited, except with written permission of McMaster University. Commercial uses of the Materials on the site are offered only pursuant to a written license and user fee. To obtain permission and begin the licensing process, please contact McMaster University:
+
+McMaster University
+c/o McMaster Industry Liaison Office
+305 – 175 Longwood Rd South
+Hamilton, Ontario L8P 0A1
+Attention: Copyright Advisor
+E: milodsk@mcmaster.ca 
+
 ## Inputs
 * Annotated Genomes - PROKKA is a suggested annotation tool
 * A tree of the input genomes, this will be used to guide clustering
