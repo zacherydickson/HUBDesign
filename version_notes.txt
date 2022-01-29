@@ -1,5 +1,6 @@
 V1.4.2
 Ensured proper headers for Cluster information output during clustering phase
+Fixed bug which caused clustering phase to be non-functional
 
 
 V1.4.1
