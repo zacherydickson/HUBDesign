@@ -1,3 +1,7 @@
+V1.4.2
+Ensured proper headers for Cluster information output during clustering phase
+
+
 V1.4.1
 IMPORTANT: This version and all subsequent versions are made available under a different license which is not freely available for commercial use.
 Alterations to the construction of the guide dendrogram during the assignment phase resulting in faster construction and improved guide trees

@@ -117,7 +117,7 @@ $opts{v} = 1 if (exists $opts{V});
 
 my $SeqOObj = Bio::SeqIO->newFh(-format => 'fasta');
 open (my $clustHandle, ">$opts{o}") or die "Could not write to $opts{o}: $!\n";
-print $clustHandle join("\t",qw(ClusterID TaxonID SeqID GeneID Start End Strand)),"\n";
+print $clustHandle join("\t",qw(ClusterID TaxonID SeqID GeneID Start End Strand CIGAR)),"\n";
 
 
 print STDERR "Loading Gene Info...\n" if(exists $opts{v});
@@ -396,7 +396,7 @@ sub GetCIGARHash($){
         my $run = 0;
         my $lastChar = 0;
         my $gapChar = $self->gap_char;
-        for(my $i = 0; $i < $qObj->length; $i++){
+        for(my $i = 0; $i < $self->length; $i++){
             my $curChar;
             if($qChars[$i] eq $consChars[$i]){ #Both the same
                 if($qChars[$i] eq $gapChar){ #Both Gaps, skip
@@ -446,7 +446,7 @@ sub ExtractClusters($$$$){   #Usage: my @clusterList = ExtractClusters(\@geneLis
         my $subalnObj = $alnObj->select_noncont_by_name(@{$cluster});
         my $consensus = $subalnObj->consensus_string();
         $consensus =~ s/\?//g;
-        my $clustObj = CLUSTER->new(uid => $clustID, seq => $consensus, cigar => {GetCIGARHash($subaln)});
+        my $clustObj = CLUSTER->new(uid => $clustID, seq => $consensus, cigar => {GetCIGARHash($subalnObj)});
         foreach my $Label (sort @{$cluster}){
             ##Search the seq list for the label and move the GENE obj to the Cluster
             my $i = 0;
