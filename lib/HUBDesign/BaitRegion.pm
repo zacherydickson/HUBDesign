@@ -11,6 +11,8 @@ sub new(){
     my $package = shift;
     my $self = {};
     my %args = @_;
+    $self->{'BaitRegion::uid'} = $args{uid} if(exists $args{uid});
+    delete $args{uid};
     $self->{'BaitRegion::taxon_id'} = $args{taxon_id} if(exists $args{taxon_id});
     delete $args{taxon_id};
     $self->{'BaitRegion::clust_id'} = $args{clust_id} if(exists $args{clust_id});
@@ -22,6 +24,15 @@ sub new(){
     carp("Unknown parameters to BaitRegion::new") if(scalar(keys %args));
     bless $self => $package;
     return $self;
+}
+
+sub uid(){
+    my $self = shift;
+    if(@_){
+        my $self->{'BaitRegion::uid'} = shift;
+        carp("Too many arguments to BaitRegion::uid") if (@_);
+    }
+    return $self->{'BaitRegion::uid'};
 }
 
 sub taxon_id(){
@@ -64,14 +75,15 @@ sub seq(){
 #Returns a sub Bait region which is a copy of its parent bait region but whose sequence is a substring
 #of its parents
 sub subbr(){
-    my ($self,$start,$end) = @_;
+    my ($self,$start,$end,$uid) = @_;
     unless(defined $start and defined $end and $start <= $end and $start >= 1 and $end <= length($self->seq)){
         croak "Start and End must be in order and within the sequence in BaitRegion::subbr\n";
     }
-    return HUBDesign::BaitRegion->new(taxon_id => $self->taxon_id, clust_id => $self->clust_id, pos => $self->pos + $start - 1, seq => substr($self->seq,$start-1,$end - $start + 1));
+    $uid = $self->uid unless(defined $uid);
+    return HUBDesign::BaitRegion->new(uid => $uid, taxon_id => $self->taxon_id, clust_id => $self->clust_id, pos => $self->pos + $start - 1, seq => substr($self->seq,$start-1,$end - $start + 1));
 }
 
-#Given an list of intervals to exlculde form a bait region, returns a list of 
+#Given an reference to list of intervals to exclude from a bait region, returns a list of 
 #new bait regions formed by breaking up the original
 #Assumes the input intervals are non-overlapping
 sub exclude(){
@@ -79,6 +91,7 @@ sub exclude(){
     my @children;
     @{$ivListRef} = sort {$a->[0] <=> $b->[0]} @{$ivListRef};
     my $offset = 0;
+    my $origLen = length($self->seq);
     foreach my $iv (@{$ivListRef}){
         my ($start, $end) = map {$_ - $offset} @{$iv};
         $end--;
@@ -86,7 +99,7 @@ sub exclude(){
             croak "Start($start) and End($end) must be in order and within the sequence(1-".length($self->seq).") in BaitRegion::exclude \n";
         }
         if($start > 1){
-            push(@children,$self->subbr(1,$start -1));
+            push(@children,$self->subbr(1,$start -1,$self->uid."_".join(":",($offset+1,$iv->[0]-1))));
         }
         if($end < length($self->seq)){
             $self = $self->subbr($end +1,length($self->seq));
@@ -96,7 +109,10 @@ sub exclude(){
             last;
         }
     }
-    push(@children,$self) if(defined $self);
+    if(defined $self){
+        $self->uid($self->uid."_".join(":",($offset+1,$origLen)));
+        push(@children,$self);
+    }
     return @children;
 }
 
@@ -104,7 +120,10 @@ sub exclude(){
 #Converts the Bait Region to a string for printing
 sub toStr(){
     my $self = shift;
-    return join("\t",($self->taxon_id,$self->clust_id,$self->pos,$self->seq));
+    my $bUID = shift || 0;
+    my $first = $self->taxon_id;
+    $first = $self->uid."\t".$first if($bUID);
+    return join("\t",($first,$self->clust_id,$self->pos,$self->seq));
 }
 
 #Checks if two bait regions are contiguous with eachother, i.e. the first bp of the second region is

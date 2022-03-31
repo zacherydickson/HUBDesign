@@ -1,8 +1,13 @@
+V1.4.4
+Fixed a bug where Clustering could not proceed
+Updates to the BaitRegion Class to accommodate a future update to Selection phase
+V1.4.3
+Fixed a bug where no CIGAR string would be added to the cluster info for clusters with only one member
+Fixed a bug where configuration for ID padding and min baits in the selection phase was ignored
+Added uid member to HUBDesign::BaitRegion class
 V1.4.2
 Ensured proper headers for Cluster information output during clustering phase
 Fixed bug which caused clustering phase to be non-functional
-
-
 V1.4.1
 IMPORTANT: This version and all subsequent versions are made available under a different license which is not freely available for commercial use.
 Alterations to the construction of the guide dendrogram during the assignment phase resulting in faster construction and improved guide trees

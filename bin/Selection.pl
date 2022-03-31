@@ -1014,8 +1014,8 @@ sub ParseConfig($){
         return;
     }
     my %Config = LoadConfig($file,"WARNING");
-    my $_ID_PADDING = $Config{'ID-padding'} if(exists $Config{'ID-padding'}); 
-    my $MIN_BAITS_PER_ORG = $Config{'baits-per-org-min'} if(exists $Config{'baits-per-org-min'}); 
+    $_ID_PADDING = $Config{'ID-padding'} if(exists $Config{'ID-padding'}); 
+    $MIN_BAITS_PER_ORG = $Config{'baits-per-org-min'} if(exists $Config{'baits-per-org-min'}); 
     $DEFAULT{d} = $Config{'tiling-density'} if(exists $Config{'tiling-density'}); 
     $DEFAULT{l} = $Config{'length'} if(exists $Config{'length'}); 
 }

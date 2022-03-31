@@ -274,7 +274,7 @@ sub HandleSinglets($$$){
         my $geneListRef = $GeneInfo->{$geneName};
         if(scalar(@{$geneListRef}) == 1){
             my $clustID = sprintf("%s_%0*d",$geneName,$CLUST_ID_PADDING,0);
-            my $clustObj = CLUSTER->new(uid => $clustID, seq => $geneListRef->[0]->seq, members => $geneListRef);
+            my $clustObj = CLUSTER->new(uid => $clustID, seq => $geneListRef->[0]->seq, members => $geneListRef, cigar => {$geneListRef->[0]->uid => length($geneListRef->[0]->seq)."="});
             OutputCluster($clustObj,$clustHandle,$SeqOObj);
             delete $GeneInfo->{$geneName};
             $nSinglets++;
@@ -388,7 +388,7 @@ sub ReRootTree($){
 sub GetCIGARHash($){
     my $self = shift;
     die "GetCIGARHash requires a Bio::SimpleAlign object" unless(ref($self) eq "Bio::SimpleAlign");
-    my @consChars = split(//,$self->consensus());
+    my @consChars = split(//,$self->consensus_string());
     my %cigar;
     foreach my $seqObj ($self->each_seq){
         my $str;
