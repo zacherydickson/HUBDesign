@@ -129,7 +129,7 @@ my %FileDict;
 #Check if given files exist
 while (my ($type,$file) = each %FileDict){
     next if($type eq "BaitInfo"); 
-    $Logger->Log("$type file ($file}) doesn't exist","ERROR") unless(-e $file);
+    $Logger->Log("$type file ($file) doesn't exist","ERROR") unless(-e $file);
 }
 
 

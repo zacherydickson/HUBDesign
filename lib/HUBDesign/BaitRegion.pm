@@ -3,9 +3,10 @@ use strict;
 use Carp;
 
 
-#Data structure rperesenting a bait region
-#Has 4 public members
+#Data structure representing a bait region
+#Has 5 public members: uid, taxon_id, clust_id, pos, and len
 #Has the methods: subbr, exclude, toStr, isContig,
+#                 isOverlapping, merge, copy
 
 sub new(){
     my $package = shift;
@@ -19,8 +20,13 @@ sub new(){
     delete $args{clust_id};
     $self->{'BaitRegion::pos'} = $args{pos} if(exists $args{pos});
     delete $args{pos};
-    $self->{'BaitRegion::seq'} = $args{seq} if(exists $args{seq});
-    delete $args{seq};
+    $self->{'BaitRegion::len'} = $args{len} if(exists $args{len});
+    delete $args{len};
+    if(exists $args{seq}){
+        $self->{'BaitRegion::seq'} = $args{seq};
+        $self->{'BaitRegion::len'} = length($args{seq});
+        delete $args{seq};
+    }
     carp("Unknown parameters to BaitRegion::new") if(scalar(keys %args));
     bless $self => $package;
     return $self;
@@ -29,7 +35,7 @@ sub new(){
 sub uid(){
     my $self = shift;
     if(@_){
-        my $self->{'BaitRegion::uid'} = shift;
+        $self->{'BaitRegion::uid'} = shift;
         carp("Too many arguments to BaitRegion::uid") if (@_);
     }
     return $self->{'BaitRegion::uid'};
@@ -66,9 +72,23 @@ sub seq(){
     my $self = shift;
     if(@_){
         $self->{'BaitRegion::seq'} = shift;
+        $self->{'BaitRegion::len'} = length($self->{'BaitRegion::seq'});
         carp("Too many arguments to BaitRegion::seq") if (@_);
     }
     return $self->{'BaitRegion::seq'};
+}
+
+sub len(){
+    my $self = shift;
+    if(@_){
+        if(defined $self->{'BaitRegion::seq'}){
+            carp("BaitRegion::len can only be set if the region's sequence is undefined");
+            return $self->{'BaitRegion::len'};
+        }
+        $self->{'BaitRegion::len'} = shift;
+        carp("Too many arguments to BaitRegion::len") if (@_);
+    }
+    return $self->{'BaitRegion::len'};
 }
 
 
@@ -123,7 +143,7 @@ sub toStr(){
     my $bUID = shift || 0;
     my $first = $self->taxon_id;
     $first = $self->uid."\t".$first if($bUID);
-    return join("\t",($first,$self->clust_id,$self->pos,$self->seq));
+    return join("\t",($first,$self->clust_id,$self->pos,$self->len,$self->seq));
 }
 
 #Checks if two bait regions are contiguous with eachother, i.e. the first bp of the second region is
@@ -144,6 +164,64 @@ sub isContig(){
         }
     }
     return 0;
+}
+
+sub isOverlapping(){
+    my ($self,$other) = @_;
+    unless(ref($self) eq "HUBDesign::BaitRegion" and ref($other) eq "HUBDesign::BaitRegion"){
+        carp "[WARNING] Cannot check overlap of non BaitRegion objects\n";
+        return 0;
+    }
+
+    if($self->taxon_id eq $other->taxon_id){
+        if($self->clust_id eq $other->clust_id){
+            ($self,$other) = ($other,$self) if($other->pos < $self->pos);
+            if($self->pos + $self->len - 1 >= $other->pos){
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+#returns a new object which is the union of the two objects
+sub merge(){
+    my ($self,$other) = @_;
+    unless(ref($self) eq "HUBDesign::BaitRegion" and ref($other) eq "HUBDesign::BaitRegion"){
+        carp "[WARNING] Cannot merge non BaitRegion objects\n";
+        return undef;
+    }
+    unless($self->taxon_id eq $other->taxon_id and 
+        $self->clust_id eq $other->clust_id){
+        carp "[WARNING] Cannot merge BaitRegions originating from different taxa or clusters";
+        return undef;
+    }
+
+    ($self,$other) = ($other,$self) if($other->pos < $self->pos);
+    my $extend = $other->pos + $other->len - $self->pos - $self->len;
+    $extend = 0 if($extend < 0);
+    my $obj = HUBDesign::BaitRegion->new(uid => $self->uid, clust_id => $self->clust_id,
+        taxon_id => $self->taxon_id, len => $self->len + $extend,
+        pos => $self->pos);
+    if(defined $self->seq and defined $other->seq){
+        my $seq = $self->seq;
+        $seq .= substr($other->seq,-$extend);
+        $obj->seq($seq);
+    }
+    return $obj;
+}
+
+sub copy(){
+    my $self = shift;
+    my $copy = HUBDesign::BaitRegion->new(
+        uid => $self->uid,
+        clust_id => $self->clust_id,
+        taxon_id => $self->taxon_id,
+        pos => $self->pos,
+        len => $self->len
+    );
+    $copy->seq($self->seq) if(defined $self->seq);
+    return $copy;
 }
 
 1;

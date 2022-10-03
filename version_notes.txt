@@ -1,3 +1,11 @@
+V1.4.7
+Bug Fix - Running clustering without a config file could cause failure
+V1.4.6
+Updated internal file opening allowing for automatically gunzipping of files
+V1.4.5
+Added a utility script "GetTargetRegions" which can extract the regions of the input genomes
+    targeted by the probes, with additional context if desired
+Minor spelling fixes
 V1.4.4
 Fixed a bug where Clustering could not proceed
 Updates to the BaitRegion Class to accommodate a future update to Selection phase

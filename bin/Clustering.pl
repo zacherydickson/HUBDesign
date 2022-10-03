@@ -39,7 +39,7 @@ sub ParseConfig($);         #Usage: ParseConfig($ConfigFile);
 my $CLUST_ID_PADDING = 5;
 my $TEMP_DIR = "/tmp";
 my $ALIGNER_EXEC = "mafft";
-my $ALIGNER = "$ALIGNER_EXEC --auto --localpair --quiet --thread {thread} {input}";
+my $ALIGNER = "$ALIGNER_EXEC --auto --localpair --quiet --thread {threads} {input}";
 my $ALIGNER_FORMAT = "fasta";
 my %DEFAULT = (d => 0.15, e => '.gz,.gff', p => 1, o => 'ClustInfo.csv', t => 0);
 

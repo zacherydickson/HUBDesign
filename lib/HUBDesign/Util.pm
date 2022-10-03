@@ -15,13 +15,14 @@ our %EXPORT_TAGS = (All => [qw(&OpenFileHandle &GetProcessorCount &ProcessNumeri
 # The default exit function is die
 #Input	File - Path to the file to open
 #	Type - A descriptor of the type of file being opened
-# (opt)	exit_Func - a reference to a subroutine to run if opening the file fails
+# (opt)	level - the logging level for failure to open the file
 #Output	A file handle if successful, 0 otherwise.
 #Note: Calling process must close the file handle
 sub OpenFileHandle($$;$){
     my ($file,$type,$level) = @_;
     $level = "ERROR" unless(defined $level);
-    if(open(my $fh, $file) ){
+    my $cmd = ($file =~ m/\.gz$/) ? "zcat $file |" : $file;
+    if(open(my $fh, $cmd) ){
         return $fh;
     } else {
         my $message = "Could not open $type file ($file): $!";
