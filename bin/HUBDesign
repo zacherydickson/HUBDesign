@@ -229,7 +229,7 @@ sub ConstructOptions(){
     'probe-count' => OPTINFO->new(type => 'i', min => 1, cat => 'important', msg => "The maximum total size of the probeset to design (Default:${GENOME_MULTIPLIER}x#Genomes)"),
     'length' => OPTINFO->new(def => 75, type => 'i', min => 1, cat => 'important', msg => "The length of probe sequences to generate"),
     'r2t-divergence' => OPTINFO->new(def => 0.15, type => 'f', min => 0, max => 1, cat => 'Clustering', msg => "Max root-to-tip divergence within a cluster"),
-    'translation-table' => OPTINFO->new(def => 1, type => 'i', min => 1, max => 33, cat => 'Clustering',  msg => "The translation table to be used"),
+    'translation-table' => OPTINFO->new(def => 1, type => 'i', min => 0, max => 33, cat => 'Clustering',  msg => "The translation table to be used (0 indicates skipping translation)"),
     #'clust-info-out' => OPTINFO->new(def => 'ClustInfo.tsv', type => 's', cat => 'Clustering', msg => "Name of a file containing information on the sequences contributing to each cluster"),
     #'clust-seq-out' => OPTINFO->new(def => 'ClustSeq.fna', type => 's', cat => 'Clustering', msg => "Name of a file containing the representative sequences for each cluster"),
     'weight-guide-tree' => OPTINFO->new(def => '1', type => 'f', min => 0, cat => 'Assignment', msg => "The relative weight of the topology generated from co-occurence of clusters compared to the user-provided guide tree"),

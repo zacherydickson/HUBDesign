@@ -29,11 +29,12 @@ sub LoadGeneInfo(%);        #Usage: my %GeneInfo = LoadGenes(%GFFSet);
 sub HandleSinglets($$$);    #Usage: my $nSinglets = HandleSinglets(\%GeneInfo,$ClustHandle,$SeqOObj);
 sub OutputCluster($$$);     #Usage: OutputCluster($ClustObj,$ClustHandle,$SeqOObj);
 sub AlignByProt($$);        #Usage: AlignByProt(\@geneList,$geneName);
+sub AlignByDNA($$);         #Usage: AlignByDNA(\@geneList,$geneName);
 sub ConstructTree($$);      #Usage: my $TreeObj = ConstructTree($alnObj,$geneName);
 sub ReRootTree($);          #Usage: ReRootTree($treeObj);
 sub GetCIGARHash($);	    #Usage: my %cigar = GetCIGARHash($alnObj);
 sub ExtractClusters($$$$);  #Usage: my @clusterList = ExtractClusters(\@geneList,$alnObj,$treeObj,$geneName);
-sub PartitionTipLabels($$); #Usage: my @ClusteredLAbels = PartitionTipLAbels($nodeObj,$threshold)
+sub PartitionTipLabels($$); #Usage: my @ClusteredLAbels = PartitionTipLabels($nodeObj,$threshold)
 sub ParseConfig($);         #Usage: ParseConfig($ConfigFile);
 
 my $CLUST_ID_PADDING = 5;
@@ -73,6 +74,7 @@ if(@ARGV < 1 or exists $opts{h}){
             "\t\tan optional taxonID on each line\n".
             "\t\tNote: If -l is specified, then no command line GFF's need to be specified\n".
             "-p INT\tTranslation Table to use (Default: $DEFAULT{p})\n".
+            "\t\tNote: Setting translation table to 0 will preventing aligning by protein sequences\n".
             "-o PATH\t The file to which cluster info will be written (Default: $DEFAULT{o})\n".
             "-t STR\tMaximum number of threads, 0 is sys_max (Default: $DEFAULT{t})\n".
             "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
@@ -90,7 +92,7 @@ foreach my $opt (keys %DEFAULT){
 
 #Process Simple Numeric Options
 $opts{d} = ProcessNumericOption($opts{d},$DEFAULT{d},0,1,0,"r2t Divergence");
-$opts{p} = ProcessNumericOption($opts{p},$DEFAULT{p},1,33,1,"Translation Table");
+$opts{p} = ProcessNumericOption($opts{p},$DEFAULT{p},0,33,1,"Translation Table");
 $opts{t} = ProcessNumericOption($opts{t},$DEFAULT{t},0,undef,1,"Max Threads");
 
 $opts{d} = (exists $opts{d}) ? $opts{d} : 0.15;
@@ -139,7 +141,12 @@ foreach my $geneName (keys %GeneInfo){
     printf STDERR "Processing gene family %s...\n",$geneName if(exists $opts{v});
     my $seqListRef = $GeneInfo{$geneName};
     print STDERR "\tAligning...\n" if(exists $opts{v});
-    my $alnObj = AlignByProt($seqListRef,$geneName);
+    my $alnObj;
+    if($opts{p} != 0){
+        $alnObj = AlignByProt($seqListRef,$geneName);
+    } else {
+        $alnObj = AlignByDNA($seqListRef,$geneName);
+    }
     print STDERR "\tGenerating Tree...\n" if(exists $opts{v});
     my $treeObj = ConstructTree($alnObj,$geneName);
     print STDERR "\tExtracting Clusters...\n" if(exists $opts{v});
@@ -296,6 +303,10 @@ sub OutputCluster($$$){
     select($oldFH);
 }
 
+
+##TODO: Combine Alignment code into a single align function
+##TODO: Split De-translation out into its own function
+
 #Aligns a set of sequences by their protein sequence
 #Input: a reference to a list of GENE Objects
 #Output: a Bio::Align::AlignI compliant object
@@ -346,6 +357,40 @@ sub AlignByProt($$){
     #unless(close($fh)){
     #    warn "[WARNING] Aligner did not execute correctly for $geneName\n";
     #}
+    return $alnObj;
+}
+
+#Aligns a set of sequences by their dna sequence
+#Input: a reference to a list of GENE Objects
+#Output: a Bio::Align::AlignI compliant object
+sub AlignByDNA($$){
+    my ($geneListRef,$geneName) = @_;
+    my @Alignment;
+    ## Output Translated Sequences to a temporary File
+    my $tmpFile = File::Temp->new(DIR => $TEMP_DIR, TEMPLATE => "HUBCLUSTXXXX", SUFFIX =>".fna",UNLINK=> ! exists $opts{V});
+    print STDERR "\t\tOutputing sequences to $tmpFile...\n" if(exists $opts{V});
+    my $SeqO = Bio::SeqIO->newFh(-format => "fasta", -fh => $tmpFile);
+    my %geneIndex;
+    my $nextIndex=0;
+    foreach my $geneObj (@{$geneListRef}){
+        print $SeqO Bio::Seq->new(-seq => $geneObj->seq, -id => $geneObj->uid);
+        $geneIndex{$geneObj->uid} = $nextIndex++;
+    }
+    ## Call the external aligner, and get its output
+    my $cmd = $ALIGNER;
+    my $filename = $tmpFile->filename;
+    $cmd =~ s/\{input\}/$filename/;
+    $cmd =~ s/--amino/--nuc/;
+    print STDERR "\t\tAligning sequences with cmd\n\t$cmd\n" if(exists $opts{V});
+    open( my $fh, "-|", "$cmd") or warn "Alignment Error for $geneName: $!";
+    unless($fh){
+        die "Alignment error for $geneName: $!";
+    }
+    my $AlnI = Bio::AlignIO->new(-fh => $fh, -format => $ALIGNER_FORMAT);
+    my $alnObj = $AlnI->next_aln();
+    unless($alnObj){
+        die "Alignment error for $geneName: $!";
+    }
     return $alnObj;
 }
 
