@@ -2,6 +2,9 @@ V1.5.0
 Added ability to cluster sequences based on nucleotide sequence rather than
 translations, useful if using non-coding DNA, or DNA with unknown reading
 frames
+Bug Fix: Sequences were not being loaded properly during the filtering and selection steps
+Minor modification to the tutorial command in README
+Updated test files
 V1.4.7
 Bug Fix - Running clustering without a config file could cause failure
 V1.4.6

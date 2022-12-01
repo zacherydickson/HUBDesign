@@ -109,7 +109,7 @@ A directory of test files is provided in the repository:
   coronavirus genomes
 
 The following will generate a directory with all final and most intermediate files HUBDesign produces:  
-`bin/HUBDesign --guide-tree test/Guide.tree --tiling-density 1 --probe-count 2500 --output-dir test --verbose --keep test/GenomeInfo.tab 2>test.log` 
+`bin/HUBDesign --guide-tree test/Guide.tree --tiling-density 1 --probe-count 5000 --output-dir test_res --verbose --keep test/GenomeInfo.tab 2>test.log` 
 
 The output of this command can be compared to the output provided in the test directory
 

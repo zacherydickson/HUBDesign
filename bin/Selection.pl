@@ -181,6 +181,7 @@ my %BaitRegionInfo = LoadRegionInfo($FileDict{BRInfo},$TreeObj);
 my %RegionOrder = GetSortedRegions();
 ApplyMaxRegionFilter(%RegionOrder) if($maxRegPerOrg);
 my $AbsMaxBaits = GetBaitCount('Max',(values %RegionOrder));
+$Logger->Log("The number of candidate baits is $AbsMaxBaits","INFO");
 ApplyMaxBaitPerOrgFilter() if($maxBaitsPerOrg);
 
 my %OrgTilingClass;
@@ -299,7 +300,7 @@ sub LoadRegionInfo($$){
     my $fh = OpenFileHandle($file,"RegionInfo");
     while(my $line = <$fh>){
         chomp($line);
-        my ($id,$taxon_id,$target,$pos,$seq) = split(/\t/,$line);
+        my ($id,$taxon_id,$target,$pos,$len,$seq) = split(/\t/,$line);
         if(exists $BRInfo{$id}){
             $Logger->Log("Ignoring additional entries for region $id on line $.","WARNING");
             next;

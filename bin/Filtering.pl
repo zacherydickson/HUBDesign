@@ -148,7 +148,7 @@ sub LoadBaitRegions($){
     my %TaxonSet;
     while(my $line = <$fh>){
         chomp($line);
-        my ($br_id, $taxon_id, $clust_id, $pos, $seq) = split(/\t/,$line);
+        my ($br_id, $taxon_id, $clust_id, $pos, $len, $seq) = split(/\t/,$line);
         if(exists $BRDict{$br_id}){
             $Logger->Log("Ignoring duplicate entry for bait region $br_id on line $.","WARNING");
             next;
