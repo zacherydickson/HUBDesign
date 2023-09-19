@@ -1,3 +1,10 @@
+V1.6.0
+Added option in Clustering to specify a regular expression to match in gene names
+    This changes the default behaviour of retaining only the first substring before an underscore
+    which stripped off prokka annotated gene copy numbers
+    Now can handle annotated names like WP_XXXXX
+Fixed a bug where gff header lines starting with '#!' weren't ignored
+Worked to ensure every gene has a unique identifier even with non-prokka annotations
 V1.5.0
 Added ability to cluster sequences based on nucleotide sequence rather than
 translations, useful if using non-coding DNA, or DNA with unknown reading

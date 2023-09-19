@@ -34,7 +34,7 @@ sub ConstructTree($$);      #Usage: my $TreeObj = ConstructTree($alnObj,$geneNam
 sub ReRootTree($);          #Usage: ReRootTree($treeObj);
 sub GetCIGARHash($);	    #Usage: my %cigar = GetCIGARHash($alnObj);
 sub ExtractClusters($$$$);  #Usage: my @clusterList = ExtractClusters(\@geneList,$alnObj,$treeObj,$geneName);
-sub PartitionTipLabels($$); #Usage: my @ClusteredLAbels = PartitionTipLabels($nodeObj,$threshold)
+sub PartitionTipLabels($$); #Usage: my @ClusteredLabels = PartitionTipLabels($nodeObj,$threshold)
 sub ParseConfig($);         #Usage: ParseConfig($ConfigFile);
 
 my $CLUST_ID_PADDING = 5;
@@ -42,14 +42,14 @@ my $TEMP_DIR = "/tmp";
 my $ALIGNER_EXEC = "mafft";
 my $ALIGNER = "$ALIGNER_EXEC --auto --localpair --quiet --thread {threads} {input}";
 my $ALIGNER_FORMAT = "fasta";
-my %DEFAULT = (d => 0.15, e => '.gz,.gff', p => 1, o => 'ClustInfo.csv', t => 0);
+my %DEFAULT = (d => 0.15, e => '.gz,.gff', p => 1, o => 'ClustInfo.csv', t => 0, r => ".+");
 
 #============================================================
 #Handling Input
 
 
 my %opts;
-getopts('d:e:l:p:o:t:C:vVh',\%opts);
+getopts('d:e:l:p:o:r:t:C:vVh',\%opts);
 ParseConfig($opts{C});
 
 if(@ARGV < 1 or exists $opts{h}){
@@ -76,6 +76,10 @@ if(@ARGV < 1 or exists $opts{h}){
             "-p INT\tTranslation Table to use (Default: $DEFAULT{p})\n".
             "\t\tNote: Setting translation table to 0 will preventing aligning by protein sequences\n".
             "-o PATH\t The file to which cluster info will be written (Default: $DEFAULT{o})\n".
+            "-r REGEX\tA pattern to match withing the gff 'Name' tag go get gene names [Default $DEFAULT{n}]\n".
+            "\t\tNote: the first matching pattern is taken, for example:\n".
+            "\t\t\tto strip off copy numbers from prokka annotation the pattern '[^_]+'\n".
+            "\t\t\twould take the first string before an underscore\n".
             "-t STR\tMaximum number of threads, 0 is sys_max (Default: $DEFAULT{t})\n".
             "-C PATH\t Path to a HUBDesign Config file (Default: $FindBin::RealBin/../HUBDesign.cfg)\n".
             "===Flags\n".
@@ -177,6 +181,9 @@ sub LoadGFFSet($@){
         my @lines = <$fh>;
         close($fh);
         chomp(@lines);
+        for(my $i =0; $i < @lines; $i++){
+            $lines[$i] =~ s/\r$//;
+        }
         push(@fileList,map {[split(/\t/,$_)]} @lines);
     }
     ##Process Files given on the command line
@@ -207,6 +214,7 @@ sub LoadGeneInfo(%){
     my $total = scalar keys %gffSet;
     my $count = 0;
     my $next = 1;
+    my $nextID = 0;
     while( my ($tid,$filename) = each %gffSet){
         $count++;
         until($next > int(($count / $total)*100)){
@@ -224,15 +232,18 @@ sub LoadGeneInfo(%){
             my %chrGNameSetDict; #^
             while(my $line = <$fh>){
                 last if($line =~ m/##FASTA/); #Reached Sequence info
-                next if($line =~ m/^##/); # Skip headers
+                next if($line =~ m/^##/ or $line =~ m/^#!/); # Skip headers
                 chomp($line);
                 my ($seqID,undef, $type, $s, $e, undef, $strand, undef, $infoStr) =
                     split(/\t/,$line);
                 next unless($type eq "CDS");
                 my %info = split(/=|;/,$infoStr);
                 my $geneName = exists $info{Name} ? $info{Name} : "UNKNOWN";
-                ($geneName) = split(/_/,$geneName);
+                if($geneName =~ m/($opts{r})/){
+                    $geneName = $1;
+                }
                 $GeneInfo{$geneName} = [] unless(exists $GeneInfo{$geneName});
+                $info{ID} = join(".",$info{ID},$tid,$nextID++);
                 push(@{$GeneInfo{$geneName}},GENE->new(uid => $info{ID},start => $s,
                         end => $e, strand => $strand, seq => undef, tid => $tid, chr => $seqID));
                 my $label = join(';',($seqID,$geneName));
@@ -265,6 +276,7 @@ sub LoadGeneInfo(%){
         }
     }
     print STDERR "\b=|\n" if (exists $opts{v});
+    ##Ensure Gene uids are uniq
     return %GeneInfo;
 }
 

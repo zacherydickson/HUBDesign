@@ -97,6 +97,7 @@ my $config =
 "##Default Option Values\n".
 "length	75\n".
 "r2t-divergence	0.15\n".
+"gene-name-regex .+\n".
 "translation-table	1\n".
 "weight-guide-tree	1\n".
 "penetrance	50\n".

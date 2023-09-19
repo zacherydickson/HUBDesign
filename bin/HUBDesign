@@ -30,9 +30,9 @@ sub CheckForSkip($$@);           #Usage: my $bSkip = CheckForSkip($phase,$bQuiet
 
 sub ParseConfig($);	        #Usage: ParseConfig($configFile);
 
-my $VERSION = "1.3.1";
+my $VERSION = "1.6.0";
 my $MAINTAINER = "ZacheryDickson";
-my $CITATION = "";
+my $CITATION = "Dickson et al (2021) Probe design for simultaneous, targeted capture of diverse metagenomic targets. Cell Rep. Methods 1(6). doe:10.1016/j.crmeth.2021.100069";
 
 my $GENOME_MULTIPLIER = 100;
 my @OPTION_ORDER;
@@ -230,6 +230,7 @@ sub ConstructOptions(){
     'length' => OPTINFO->new(def => 75, type => 'i', min => 1, cat => 'important', msg => "The length of probe sequences to generate"),
     'r2t-divergence' => OPTINFO->new(def => 0.15, type => 'f', min => 0, max => 1, cat => 'Clustering', msg => "Max root-to-tip divergence within a cluster"),
     'translation-table' => OPTINFO->new(def => 1, type => 'i', min => 0, max => 33, cat => 'Clustering',  msg => "The translation table to be used (0 indicates skipping translation)"),
+    'gene-name-regex' => OPTINFO->new(def => '.+', type => 's', cat => 'Clustering', msg => "Gene names will be the first substring of the annotated gene name matching this pattern"),
     #'clust-info-out' => OPTINFO->new(def => 'ClustInfo.tsv', type => 's', cat => 'Clustering', msg => "Name of a file containing information on the sequences contributing to each cluster"),
     #'clust-seq-out' => OPTINFO->new(def => 'ClustSeq.fna', type => 's', cat => 'Clustering', msg => "Name of a file containing the representative sequences for each cluster"),
     'weight-guide-tree' => OPTINFO->new(def => '1', type => 'f', min => 0, cat => 'Assignment', msg => "The relative weight of the topology generated from co-occurence of clusters compared to the user-provided guide tree"),
@@ -486,7 +487,7 @@ sub GetPhaseCmd($){
     #An array reference value indicates that the first key in the list which exists in %opts will be used
     if($phase eq 'Clustering') {
         %options = (_l => $FileDict{GenomeInfo}, d => 'r2t-divergence', p => 'translation-table',
-            _o => $FileDict{ClustInfo}, t => 'threads', C => 'config');
+            _o => $FileDict{ClustInfo}, r => 'gene-name-regex', t => 'threads', C => 'config');
         %flags = (v => 'verbose');
         $outfile = $FileDict{ClustSeq}
     } elsif($phase eq 'Assignment') {

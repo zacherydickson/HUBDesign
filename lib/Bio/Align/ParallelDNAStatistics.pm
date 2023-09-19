@@ -74,6 +74,9 @@ sub D_Uncorrected {
     my $pm = $self->{'Obj::ForkManager'};
     #Set the number of blocks to be the minimum
     my $nBlocks = (sort {$a <=> $a} ($seqct*($seqct-1)/2,$self->{'Obj::Threads'}))[0];
+    if($nBlocks < 1){
+        $nBlocks = 1;
+    }
     my ($top,$left,$right) = (0, 1, $seqct-1);
     my $target = 0.5*$seqct*($seqct-1)/$nBlocks;
     my @coverage;
